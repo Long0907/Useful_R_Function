@@ -1,0 +1,317 @@
+---
+title: "Titanic"
+author: "Long Zheng"
+date: "12/4/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## __Use machine learning to create a model that predicts which passengers survived the Titanic shipwreck__
+
+
+#required packages
+```{r, include=FALSE}
+library(tidyverse)
+library(ROCit)
+source("plot_resid_lev_logistic.R")
+```
+
+#load the trainning dataset and explore.
+```{r}
+train<- read_csv("dataset/train.csv")
+```
+
+
+```{r EDA}
+#drop cabin column, because of too many missing data 687/891. 
+
+# make sex and embarked as factor variables with levels
+train<-
+  train %>% 
+  mutate(Sex.f = as.factor(Sex),
+         Embarked.f = factor(Embarked),
+         Pclass.f = factor(Pclass),
+         Survived = factor(Survived),
+         cabin.f= factor(if_else(is.na(Cabin),0,1)))
+#get an overview of the data
+t1<-
+train %>% 
+  select(Pclass,Age,SibSp,Parch,Fare,Sex.f,Embarked.f) %>% 
+  GGally::ggpairs()
+#too much missing data in cabin (687/891). 
+t1 <- data.frame(t1)
+
+# survival distribution  
+hist(train$Survived)
+# age
+hist(train$Age,xlab = "Age",ylab = "count", main = "")
+# sex
+hist(train$Sex2,xlab = "Gender(male =1)",ylab = "count", main = "")
+
+# fare
+hist(train$Fare)
+# Age and Fare
+data(train)
+with(train,plot(Age,Fare))
+with(subset(train,Age == 30), points(Age,Fare,col= "red"))  
+
+```
+
+
+#### impute age variable by linear regression
+```{r}
+# impute NA age value with linear regression prediction
+train_random <- train %>% 
+  select(Survived,Age,Pclass.f,Sex.f,Fare,SibSp,Parch,Embarked.f, cabin.f)
+
+age_na <- is.na(train_random$Age)
+
+train_random[!age_na,] %>% 
+  psych::describe()
+age_model <- lm(Age~Pclass.f+I(log(Fare+0.01))+SibSp, data=train_random[!age_na,])
+summary(age_model)
+
+pred_age <- predict(age_model, train_random)
+
+impute_data<-train_random %>% 
+  mutate(Age = if_else(is.na(Age), pred_age, Age))
+
+# impute NA fare value with fare median
+impute_data<-
+  impute_data %>% 
+  mutate(Fare = if_else(is.na(Fare), median(Fare), Fare),
+         Fare = if_else(Fare== 0, Fare+1, Fare),
+         fare_cut = ntile(Fare,4),
+         family = SibSp+Parch+1,
+         age_cut = ntile(Age,4)
+         ) 
+
+m1<-glm(Survived ~ age_cut,family = binomial,data = impute_data)
+m2<-glm(Survived ~factor(age_cut),family = binomial,data = impute_data)
+anova(m1,m2, test= "LRT")# categorical term does not improve.
+m3<-glm(Survived ~ fare_cut,family = binomial,data = impute_data)
+m4<-glm(Survived ~fare_cut.f,family = binomial,data = impute_data)
+anova(m3,m4, test= "LRT") # categorical term does not improve.
+
+```
+  
+#use glmulti to obtain a best model.
+```{r}
+best_subset_att <-
+  glmulti::glmulti(Survived ~ age_cut+Pclass.f+Sex.f+fare_cut+family+Embarked.f+cabin.f, 
+          data = impute_data,
+          level=1, family = binomial, crit="aicc", confsetsize=128)
+
+best_model <- 
+  summary(best_subset_att)$bestmodel %>% glm(., data = impute_data, family = binomial)
+summary(best_model)
+```
+
+```{r}
+
+#Assess godness of fit.
+ResourceSelection::hoslem.test(best_model$y, fitted(best_model), g=20)
+
+#Assess residual and leverage
+plot_resid_lev_logistic(best_model)
+
+# Classification
+DescTools::Conf(best_model, pos = 1)
+
+best_model.p <-
+  tibble(
+    pred_p = best_model$fitted.values,
+    y = best_model$y
+  )
+
+best_model.p %>%
+  ggplot(aes(x = pred_p)) + 
+  facet_wrap(~y) +
+  geom_histogram() +
+  geom_vline(xintercept = .5, color = "red")
+
+# Accuracy
+best_model.roc <- 
+  ROCit::measureit(score = best_model$fitted.values, 
+                   class = best_model$y,
+                   measure = c("ACC", "SENS", "SPEC"))
+
+tibble(
+  Cutoff = best_model.roc$Cutoff,
+  ACC = best_model.roc$ACC
+) %>%
+ggplot(aes(x = Cutoff, y = ACC)) +
+  geom_point() +
+  geom_line()
+
+# ROC Curve
+tibble(
+  Cutoff = best_model.roc$Cutoff,
+  SENS = best_model.roc$SENS,
+  SPEC = best_model.roc$SPEC
+) %>%
+  pivot_longer(., cols = c("SENS", "SPEC"), values_to = "value", names_to = "metric") %>%
+  ggplot(aes(x = Cutoff, y = value, color = metric)) +
+  geom_point() + 
+  geom_line()
+
+tibble(
+  Cutoff = best_model.roc$Cutoff,
+  SENS = best_model.roc$SENS,
+  SPEC = best_model.roc$SPEC,
+  SUM = SENS + SPEC
+) %>%
+  arrange(-SUM, -SENS, -SPEC)
+library(ROCit)
+roc_empirical <- 
+  rocit(score = best_model$fitted.values, class = best_model$y)
+plot(roc_empirical, YIndex = F)
+roc_empirical
+summary(roc_empirical)
+ciAUC(roc_empirical)
+
+OptimalCutpoints::optimal.cutpoints(X = "pred_p", status = "y", 
+                  data = data.frame(best_model.p), 
+                  methods = c("Youden", "MaxSpSe", "MaxProdSpSe"), tag.healthy = 0)
+
+
+library(plotROC)
+best_model.p %>%
+  ggplot(aes(m = pred_p, d = y)) + 
+  geom_roc(n.cuts=0,labels=FALSE) + 
+  style_roc(theme = theme_grey, xlab = "1 - Specificity", ylab = "Sensitivity") +
+  geom_abline(slope = 1, intercept = 0)
+
+```
+
+#test prediction based on the selected logistic model
+```{r}
+#######Model prediction
+test <- read_csv("dataset/test.csv")
+skimr::skim(test)
+
+test<-
+  test %>% 
+  mutate(Sex.f = as.factor(Sex),
+         Embarked.f = factor(Embarked),
+         Pclass.f = factor(Pclass),
+         cabin.f= factor(if_else(is.na(Cabin),0,1)),
+         Fare = if_else(is.na(Fare), median(Fare), Fare),
+         Fare = if_else(Fare== 0, Fare+1, Fare),
+         fare_cut = ntile(Fare,4),
+         family = SibSp+Parch+1,
+         )
+# impute NA value of age 
+
+age_model_test <- lm(Age~Pclass.f+I(log(Fare+0.01))+SibSp, data=test)
+summary(age_model_test)
+
+pred_age_test <- predict(age_model_test, test)
+
+impute_data_test<-test %>% 
+  mutate(Age = if_else(is.na(Age), pred_age_test, Age))
+
+# make Age categorical 
+impute_data_test<-
+  impute_data_test %>% 
+  mutate(age_cut= ntile(Age,4))
+
+#test prediction.
+test_prediction <- tibble(pred.test = predict(best_model, impute_data_test, type = "response"))
+
+#cut point 0.499.
+test_prediction <-test_prediction %>% 
+  mutate(Survived = if_else(pred.test>0.499, 1, 0),
+         PassengerId = test$PassengerId)
+
+submission <- 
+  test_prediction %>% 
+  select(PassengerId, Survived)
+
+write.csv(submission, "Titanic-submission.csv", row.names = FALSE)
+```
+
+
+
+
+#####try use other machine learning methods. randomForest classification.
+```{r}
+train_random <- train %>% 
+  select(Survived, Age,Pclass.f, Sex.f,Fare,SibSp,Parch,Embarked.f)
+
+#add one column, if Age == NA, then 1. else 0. 
+age_na <- is.na(train_random$Age)
+
+train_random[!age_na,] %>% 
+  psych::describe()
+age_model <- lm(Age~Pclass.f+I(log(Fare+0.01))+SibSp, data=train_random[!age_na,])
+summary(age_model)
+
+
+pred_age <- predict(age_model, train_random)
+
+  
+impute_data<-train_random %>% 
+  mutate(Age = if_else(is.na(Age), pred_age, Age))
+  
+impute_data<- na.omit(impute_data)
+
+rf_model1 <- randomForest(Survived~.,
+                   data = impute_data, importance=TRUE, mtry=3)
+rf_model1
+
+ 
+predict(rf_model1, test_set, type = "class")
+
+```
+
+#test prediction based on the selected randomForest model
+```{r}
+#######Model prediction
+test <- read_csv("dataset/test.csv")
+
+# make sex and embarked as factor variables with levels
+test<-
+  test %>% 
+  mutate(Sex.f = as.factor(Sex),
+         Embarked.f = factor(Embarked),
+         Pclass.f = factor(Pclass))
+#impute NAs with predicted Age
+pred_age_test <- predict(age_model, test)
+
+
+impute_data_test<-test %>% 
+  mutate(Age = if_else(is.na(Age), pred_age_test, Age))
+```
+
+
+```{r univariable analysis}
+univ_embk<-glm(Survived~Embarked2, family = binomial, data = train)
+summary(univ_embk)
+univ_Pclass<-glm(Survived~Pclass, family = binomial, data = train)
+summary(univ_Pclass)
+
+#test prediction.
+test_prediction <- tibble(pred.test = predict(rf_model1, impute_data_test, type = "class"))
+
+#cut point 0.5.
+test_prediction <-test_prediction %>% 
+  mutate(PassengerId = test$PassengerId,
+         Survived = pred.test)
+
+submission <- 
+  test_prediction %>% 
+  select(PassengerId, Survived)
+
+write.csv(submission, "Titanic-submission.csv", row.names = FALSE)
+
+```
+
+
+
+
+
+
+
+
