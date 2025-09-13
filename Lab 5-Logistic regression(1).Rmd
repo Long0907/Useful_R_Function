@@ -1,0 +1,84 @@
+---
+title: "Logistic regression, ROC curve"
+output:
+  html_document:
+    df_print: paged
+---
+Learning objectives.
+
+- Perform logistic regression based classification in ``R``.
+- Understand the Specificity-Sensitivity trade-off.
+- Evaluate a classifier performance using the ROC curve.
+
+
+### Analysis 
+You will build logistic regression classifiers for breast cancer recurrence using the Ljubljana Breast cancer data. The code to pre-process/transform the data is provided below (identical to that used for LDA in Lab 4).
+
+a. Split the data into training (70%), and validation (30%). (Use the same seed you used in Lab 4 so that you can directly compare to your results to LDA). (As in Lab 4 we will not have a separate test set due to the moderate sample size-- we will learn next class about cross-validation, which will allow us to split the data into training and testing only and still perform model selection)
+    
+b. Train a logistic regression classifier on the training data using all the available (recoded) features. Although we do not focus on inference, the parameter estimates and their corresponding p-values can give us a sense of variable importance for developing predictive models. Based on the estimated logistic regression coefficients and their p-values, which variables seem most predictive? Compare with the graphical assessment you performed in Lab 4.
+    
+c. Build logistic regression classifiers of increasing complexity by including: i) the most predictive variable, ii) the two most predictive variables, iii) the three most predictive variables and iv) all the 9 predictor variables.
+    
+e. Use the ``predict`` function with the option ``type = response`` to compute the estimated probability of recurrence for the observations in the validation set. Classify the observations to the ``recurrence`` and ``no-recurrence`` class based a probability cutoff/threshold of $p=1/2$.  Use the function ``classificationError`` you wrote in Lab 4 to compute the overall misclassification error for the classifiers you built in c. Choose the best classifier based on misclassification error.
+
+f. Using the function ``auc`` in package ``pROC`` compute the training and validation AUC for each of the classifiers in c. Is the best classifier based on AUC the same as the one in e. based on misclassification error? 
+
+g. Plot in the same graph the training and test misclassification error as a function of classifier complexity. Comment.
+
+h. Plot in the same graph (but separately from graph in g.) the training and test AUC as a function of classifier complexity. Comment.
+    
+
+### Conceptual
+The goal of this exercise is to gain a deeper understanding of the trade-off between sensitivity and specificity and the ROC curve. Assume a binary classification problem with a single quantitative predictor $X$. Assume that you know the true distribution of $X$ for each of the two classes (in practice these distributions would not be known but can be estimated as it is done in LDA). Specifically, $\,X \sim N(\mu=-1, \sigma=1)$ in the negative class $\,Y=0$ and $\,X \sim N(\mu=2, \sigma=1)$ in the positive class $\,Y=1$. 
+Assume also that the two classes are equally likely. 
+
+a. Derive the posterior probabilities $\, P(Y=0 \;|\; X=x)$ and $\, P(Y=1 \;|\; X=x)$. 
+
+b. Derive the Bayes rule that classifies an observation with $\,X=x$ to $\,Y=1$ if $\, P(Y=1 \;|\; X=x) > P(Y=0 \;|\; X=x)$
+
+c. Show that there is a cuttof $\,t_{Bayes}$ such that the Bayes rule can be expressed as:
+
+$$Y = \begin{cases}
+  0 & \text{if} \quad x \le t_{Bayes} \\
+  1 & \text{if} \quad x > t_{Bayes}
+\end{cases}$$
+
+d. Compute the specificity, sensitivity, false positive rate, false negative rates, and overall misclassification rate for the Bayes rule. (Hint: recall you can use the R function ``pnornm`` to compute the probability that a normal variable exceeds or is below a given threshold) 
+
+e. Consider now the more general decision rule (below) with arbitrary cutoff $t$ (not necessarily $\,t_{Bayes}$).  Compute the specificity, sensitivity, false positive rate, false negative rates, and overall misclassification rate for a grid of 20 equally spaced values of the cutoff $t$ ranging from $t=-4$ to $t=6$.(Hint: use ``seq`` to generate the grid and a ``for`` loop to iterate over the grid values)
+
+$$Y = \begin{cases}
+  0 & \text{if} \quad x \le t \\
+  1 & \text{if} \quad x > t
+\end{cases}$$
+ 
+
+f. Plot in the same graph the sensitivity, specificity and misclassification rate as a function of $t$.  Interpret the plot and comment on the cutoff where the minimum misclassification rate is attained.
+
+g. Plot the ROC curve based on your results on e.
+
+
+
+```{r}
+
+breast = read.csv("/Users/jp/Google Drive/Teaching/Machine Learning/2021/Lectures/Lecture 4 - LDA/breast-cancer.data.txt", header=T, stringsAsFactors = TRUE) #stringsAsFactors = TRUE ensures all string variables are read in as factors
+
+breast = breast[complete.cases(breast), ] #keeps complete cases only
+
+breast$recurrence = factor(breast$recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence"))  #renames levels using shorter names
+
+breast$age_quant = as.integer(breast$age)  # creates a new quantitative age variable 
+
+breast$tumor_size_quant = factor(breast$tumor_size, levels=levels(breast$tumor_size)[c(1,10,2,3,4,5,6,7,8,9,11)]) #reorders levels
+breast$tumor_size_quant = as.integer(breast$tumor_size_quant) # creates a new quantitative tumor size variable
+
+breast$inv_nodes_quant = factor(breast$inv_nodes, levels(breast$inv_nodes)[c(1,5,6,7,2,3,4)]) 
+breast$inv_nodes_quant = as.integer(breast$inv_nodes_quant) #creates a new quantitative invasive nodes variable
+
+table(breast$tumor_size_quant, breast$tumor_size) # Checks that recoding worked as expected
+table(breast$inv_nodes_quant, breast$inv_nodes) 
+```
+    

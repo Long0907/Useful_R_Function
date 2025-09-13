@@ -1,0 +1,413 @@
+---
+title: "PM 591 -- Machine Learning for the Health Sciences."
+author: "Luqing Ren Assignment5" 
+date: "Due 4/16/2019"
+html_document: default
+---
+
+```{r,include=FALSE}
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(gbm)
+library(mlr)
+library(caret)
+library(pROC)
+```
+
+
+### Exercise 1 (Analysis/conceptual)
+You will assess how well a tree model can capture non-linearities by fitting a regression tree to simulated non-linear data.
+
+##### i. Simulate the data
+
+```{r}
+set.seed(1984) 
+n = 1000
+x = runif(n, -5, 5) # n observations uniformly distributed in the interval -5 to 5
+error = rnorm(n, sd=0.5)
+y = sin(x) + error # nonlinear relationship between outcome y and feature x
+nonlin = data.frame(y=y, x=x)
+```
+
+##### ii. Split the data into training and testing (500 observations in each). Plot the data -- scatter plot of y vs. x
+```{r}
+set.seed(1984)
+index<- sample(1:nrow(nonlin),floor(0.5*nrow(nonlin)))
+non_train<- nonlin[index,]
+non_test<- nonlin[-index,]
+
+# scatter plot y vs.x
+par(mar=c(5,4,2,2))
+plot(x=nonlin$x,y=nonlin$y, xlab=" feature x", ylab="sin(x)+error")
+```
+
+##### iii. Fit a regression tree using the training set 
+
+```{r}
+
+treefit = rpart(y~x, method='anova', control=list(cp=0), data=non_train) 
+
+# Method='anova' indicate sregression tree. cp=0 ensures that binary recursive partitioning will not stop early due to lack of improvement in RSS by an amount  of at least cp
+```
+
+##### iv. Plot the fitted regression tree
+
+```{r}
+plot(treefit) # plots the tree
+text(treefit) # annotates the tree. May fail if tree is too large
+
+rpart.plot(treefit) #the rpart.plot function generates better looking trees!
+
+```
+
+Note: the height of the branches are proportional to the improvement in RSS
+
+##### v. Plot the cv relative error to determine the optimal complexity parameter
+
+```{r}
+plotcp(treefit)
+```
+
+##### vi. Print the table complexity parameter values and their associated cv-errors
+
+```{r}
+printcp(treefit)
+```
+
+##### vii. Select the optimal complexity parameter and prune the tree
+
+```{r}
+optimalcp = treefit$cptable[which.min(treefit$cptable[,"xerror"]),"CP"]
+print(paste("The optimai complexity parameter is",round(optimalcp,3)))
+
+treepruned = prune(treefit, cp=optimalcp)
+```
+
+##### viii. Plot the pruned tree
+```{r}
+fancyRpartPlot(treepruned)
+```
+
+##### ix. Summarize the pruned tree object and relate the summary to the plotted tree above
+
+```{r}
+summary(treepruned)
+```
+
+##### x. Based on the plot and/or summary of the pruned tree create a vector of the (ordered) split points for variable x, and a vector of fitted values for the intervals determined by the split points of x.
+
+```{r}
+x_splits = sort(c(-3.7,-4.3,-0.2,-2.9,3.1,3.5,0.62,2.4,-0.99,-3.3,-2.1),decreasing = FALSE)
+y_splits = sort(c(-1.1,-0.76,-0.55,-0.089,0.27,-0.92,-0.19,0.22,0.29,0.96,0.73,1.1),decreasing = FALSE)
+```
+
+##### xi. Plot the step function corresponding to the fitted (pruned) tree
+
+```{r}
+plot(y~x, data=non_train)
+stpfn = stepfun(x_splits, y_splits) #stepfun creates the step function 
+plot(stpfn, add=TRUE, lwd=2, col='red4') #add=TRUE plots over the existing plot 
+```
+
+##### xii. Fit a linear model to the training data and plot the regression line. Contrats thethe quality of the fit of the tree model vs. linear regression by inspection of the plot
+
+```{r}
+lmfit = lm(y ~ x, data=non_train)
+
+plot(y~x, data=non_train)
+plot(stpfn, add=TRUE, lwd=2, col='red4')
+abline(lmfit, col='blue', lwd=2)
+legend("bottomleft",c("linear","tree"),lty=1,col=c("blue","red4"))
+```
+ 
+##### xiii. Compute the test MSE of the pruned tree and the linear regression model
+```{r}
+treepred<- predict(treepruned, newdata= non_test)
+test_MSE <- mean((treepred-non_test$y)^2)
+print(paste("The mean of test MSE of the pruned tree is" ,round(test_MSE,3)))
+
+lmpred <- predict(lmfit, newdata=non_test)
+test_lim<- mean((lmpred-non_test$y)^2)
+print(paste("The mean of test MSE of the linear regression model is" ,round(test_lim,3)))
+```
+
+
+### Exercise 2 (Analysis)
+You will recreate the analysis of the heart data in the textbook and lecture. 
+```{r,message=FALSE}
+heart<- read_csv("Heart.csv")
+
+# convert variables into factors
+heart$Sex <- as.factor(heart$Sex)
+heart$ChestPain <- as.factor(heart$ChestPain)
+heart$Fbs<- as.factor(heart$Fbs)
+heart$RestECG<- as.factor(heart$RestECG)
+heart$ExAng<- as.factor(heart$ExAng)
+heart$Slope<- as.factor(heart$Slope)
+heart$Ca<- as.factor(heart$Ca)
+heart$Thal<- as.factor(heart$Thal)
+heart$AHD<- factor(heart$AHD,
+                   levels = c("No", "Yes"), 
+                   labels = c("0", "1"))  
+
+# impute the missing value
+heart<- rfImpute(AHD~., heart, iter=6)
+```
+
+##### i.Split the data into training and testing
+```{r}
+set.seed(1984)
+heart_index<- sample(1:nrow(heart),floor(0.7*nrow(heart)))
+heart_train<- heart[heart_index,]
+heart_test<- heart[-heart_index,]
+```
+
+##### ii.  Fit a classification tree using ``rpart``
+```{r}
+set.seed(1984)
+heart_tree<- rpart(AHD~.,data=heart_train, method="class",control=list(minsplit=15, minbucket=5,cp=0))
+printcp(heart_tree)
+```
+
+##### iii. Plot the unpruned tree
+```{r}
+plot(heart_tree) # plots the tree
+fancyRpartPlot(heart_tree) #the function fancyRpartPlot in package rattle draws good looking trees!
+```
+
+##### iv.  Plot the cv error
+```{r}
+plotcp(heart_tree)
+cp = heart_tree$cptable[which.min(heart_tree$cptable[,"xerror"]),"CP"]
+
+print(paste("The cp value is", round(cp,3), "having the least cv error"))
+```
+
+##### v. Prune the tree using the optimal complexity parameter
+```{r}
+heart_tree_pruned <- prune(heart_tree, cp=0.011)
+heart_tree_pruned
+```
+
+##### vi. Plot the pruned tree
+```{r}
+fancyRpartPlot(heart_tree_pruned,cex=0.6,yesno=2)
+```
+
+##### vii. Compute the test misclassification error
+```{r}
+heart_treepredict<- predict(heart_tree_pruned, newdata = heart_test, type="class")
+table<- with(heart_test,table(heart_treepredict, AHD))
+table
+tree_mis_error<- (table[1,2]+table[2,1])/sum(table)
+print(paste("The misclassification error for test set is " ,round(tree_mis_error,3)))
+```
+
+##### vii. Fit the tree with the optimal complexity parameter to the full data (training + testing)
+```{r}
+treefit_heart <-  rpart(AHD~., data=heart, method="class",control=list(minsplit=15, minbucket=5, cp=0.011))
+printcp(treefit_heart)
+```
+
+
+### Exercise 2 -- Analysis
+Compare the performance of __classification trees__, __bagging__, __random forests__, and __boosting__ for predicting heart disease based on the ``heart`` data. You can use ``mlr`` or directly the appropriate R packages.
+
+##### i. Split the data into training and testing. Train each of the models on the training data and extract the cross-validation (or out-of-bag error for bagging and Random forest). 
+
+###### a. For classification trees use ``rpart`` with pruning. Plot the tree using ``fancyRpartPlot`` in package ``rattle``. Plot the variable importance.
+```{r}
+tree_varimp <-as.matrix(varImp(heart_tree_pruned,scale=FALSE))
+colnames(tree_varimp)<- c("importance")
+#plot the importance
+barplot(tree_varimp[,1],names.arg = c("Age","Ca","ChestPain","Chol
+","ExAng","Fbs","MaxHR","Oldpeak","RestBP","Sex","Slope","Thal","RestECG"),las=2,cex.names=0.8, horiz= TRUE,xlim=c(0,50),xlab="importance")
+
+```
+   
+###### b. For bagging use ``randomForest`` with ``mtry`` equal to the number of features (all other parameters at their default values). Generate the variable importance plot using ``varImpPlot`` and extract variable importance from the ``randomForest`` fitted object using the ``importance`` function.
+```{r}
+# bagging
+heart_bagging<- randomForest(AHD~., heart_train, mtry=sqrt(13))
+varImpPlot(heart_bagging,main="",pch=16)
+importance_bagging<- importance(heart_bagging)
+importance_bagging
+```
+   
+###### c.  For random forests use ``randomForest`` with the default parameters. Generate the variable importance plot using ``varImpPlot`` and extract variable importance from the ``randomForest`` fitted object using the ``importance`` function. 
+```{r}
+heart_random <- randomForest(AHD~., heart_train, proximity=TRUE)# Random Forest
+# variable importance plot
+varImpPlot(heart_random,main="",pch=16)
+importance_random<- importance(heart_random)
+importance_random
+```
+   
+###### d. For boosting use `gbm` with ``cv.folds=5`` to perform 5-fold cross-validation, and set ``class.stratify.cv`` to ``AHD`` (heart disease outcome) so that cross-validation is performed stratifying by ``AHD``.  Plot the cross-validation error as a function of the boosting iteration/trees (the `$cv.error` component of the object returned by ``gbm``) and determine whether additional boosting iterations are warranted. If so, run additional iterations with  ``gbm.more`` (use the R help to check its sintax). Choose the optimal number of iterations. Use the ``summary.gbm`` function to generate the variable importance plot and extract variable importance/influence (``summary.gbm`` does both). Generate 1D and 2D marginal plots with ``gbm.plot`` to assess the effect of the top three variables and their 2-way interactions. 
+```{r}
+
+heart_boosting<- gbm(1*(AHD==0) ~.,data=heart_train,
+                     distribution = 'bernoulli',
+                     cv.folds=5,
+                     class.stratify.cv=TRUE)
+
+plot(heart_boosting$cv.error,xlab = "iterations",ylab="boosting cv error",main="boosting trees cross-validation error")
+
+iteration<- which.min(heart_boosting$cv.error)
+print(paste("The optimal number of iteration is " ,iteration))
+
+# variable importance plot
+summary(heart_boosting)
+
+# Generate 1D and 2D marginal plots with ``gbm.plot`` to assess the effect of the top three variables and their 2-way interactions.
+
+n.trees_opt <- gbm.perf(heart_boosting,plot.it = FALSE)
+par(mfrow=c(3,2))
+Thal<- plot(heart_boosting, i.var=c("Thal"), n.trees= n.trees_opt,type='response',return.grid=TRUE)
+plot(Thal, type='1',lwd=3)
+
+chestpain<- plot(heart_boosting, i.var=c("ChestPain"), n.trees= n.trees_opt,type='response',return.grid=TRUE)
+plot(chestpain, type='1',lwd=3)
+
+ca<- plot(heart_boosting, i.var=c("Ca"), n.trees= n.trees_opt,type='response',return.grid=TRUE)
+plot(ca, type='1',lwd=3)
+
+plot(heart_boosting,i.var = c("Thal","ChestPain"),n.trees = n.trees_opt,type = "response")
+
+```
+
+_The top three variables with higher importance are 'thal','chestpain' and 'ca'.  
+
+
+##### ii. Compute the test misclassification error for the 4 methods and comment on their relative performance.
+
+```{r,message=FALSE}
+methods<- c(heart_tree_pruned,heart_bagging,heart_random,heart_boosting)
+
+methods_predict <-function(method,dataset){
+  
+  modelpred<-predict(method,newdata=dataset, type="class")
+  table<- with(dataset,table(modelpred, AHD))
+  mis_error<- (table[1,2]+table[2,1])/sum(table)
+  return(mis_error)
+} 
+ 
+error_tree<- methods_predict(heart_tree_pruned,heart_test)
+error_bagging<-methods_predict(heart_bagging,heart_test)
+error_random<-methods_predict(heart_random,heart_test)
+error_boosting<-predict(heart_boosting,newdata=heart_test, type="response")
+table_bost<- with(heart_test,table(error_boosting, AHD))
+mis_error_bost<- (table_bost[1,2]+table_bost[2,1])/sum(table_bost)
+tree_mis_errors<- rbind(error_tree=error_tree,error_bagging=error_bagging,error_random=error_random,error_boosting=mis_error_bost)
+tree_mis_errors
+```
+
+### Exercise 3 -- Analysis/conceptual 
+Yo will evaluate the effect of critical boosting parameters (number of boosting iterations, shrinkage/learning rate, and tree depth/interaction) on the Metabric data.  In ``gbm`` the number of iterations is controlled by ``n.trees`` (default is 100), the shrinkage/learning rate is controlled by ``shrinkage`` (default is 0.001), and interaction depth by ``interaction.depth`` (default is 1).
+
+##### i. Split the metabric data into training and testing. 
+```{r}
+# load metabric data 
+load('/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week10/metabric.Rdata') 
+metabric$y<- as.factor(metabric$y)
+# split the data 
+set.seed(201)
+metabric_index<- sample(1:nrow(metabric),floor(0.7*nrow(metabric)))
+metabric_train<- metabric[metabric_index,]
+metabric_test<- metabric[-metabric_index,]
+```
+
+##### ii. Set the seed and train a boosting classification with ``gbm`` using 10-fold cross-validation (``cv.folds=10``) on the training data with ``n.trees = 5,000``, ``shrinkage = 0.001``, and ``interaction.depth =1``. Plot the cross-validation errors as a function of the boosting iteration.
+
+
+##### iii. Repeat ii. using the same seed and ``n.trees=5,000`` with the following 3 additional combination of parameters: a) ``shrinkage = 0.001``, ``interaction.depth = 2``; b) ``shrinkage = 0.01``, ``interaction.depth = 1``; c) ``shrinkage = 0.01``, ``interaction.depth = 2``.
+```{r,message=FALSE}
+set.seed(201)
+
+metabric_boost<- gbm(1*(y==0) ~., data=metabric_train, 
+                     distribution= 'bernoulli', 
+                     n.trees=10000, shrinkage=0.001,
+                     interaction.depth = 1,
+                     cv.folds=10,class.stratify.cv = TRUE)
+
+
+metabric_boost_a<- gbm(1*(y==0) ~., data=metabric_train, 
+                     distribution= 'bernoulli', 
+                     n.trees=10000, 
+                     shrinkage=0.001,
+                     interaction.depth = 2,
+                     cv.folds=10,class.stratify.cv = TRUE)
+
+
+metabric_boost_b<- gbm(1*(y==0) ~., data=metabric_train,
+                     distribution= 'bernoulli', 
+                     n.trees=10000, 
+                     shrinkage=0.01,
+                     interaction.depth = 1,
+                     cv.folds=10,class.stratify.cv = TRUE)
+
+
+metabric_boost_c<- gbm(1*(y==0) ~., data=metabric_train,
+                     distribution= 'bernoulli', 
+                     n.trees=10000, 
+                     shrinkage=0.01,
+                     interaction.depth = 2,
+                     cv.folds=10,class.stratify.cv = TRUE)
+par(mfrow=c(2,2))
+plot(metabric_boost$cv.error,xlab = "iterations",ylab="boosting cv error",main="boosting")
+plot(metabric_boost_a$cv.error,xlab = "iterations",ylab="boosting_a cv error",main="boosting-a")
+plot(metabric_boost_b$cv.error,xlab = "iterations",ylab="boosting_b cv error",main="boosting-b")
+plot(metabric_boost_c$cv.error,xlab = "iterations",ylab="boosting_c cv error",main="boosting-c")
+
+
+boost_cv_errors<- rbind(boosting=round(min(metabric_boost$cv.error),3),boosting_a=round(min(metabric_boost_a$cv.error),3),boosting_b=round(min(metabric_boost_b$cv.error),3),boosting_c=round(min(metabric_boost_c$cv.error),3))
+
+boost_cv_errors
+```
+
+--These four boost models are all computational costly. Compared these four models, the higher interaction.depth does not improve fit. In addition, the higher shrinkage has smaller cv error when control the same trees and interaction.depth. According to the cv error, I pick the model boost c.
+
+##### iii. Choose the best parameter combination among the ones examined above to a) generate 1D and 2D marginal plots with ``gbm.plot`` to assess the effect of the top three variables and their 2-way interactions; b) compute the test misclassification error and AUC.
+
+```{r,message=FALSE}
+#1D and 2D marginal plots
+summary(metabric_boost_c)[1:3,]# show the top 10 variables
+#make the 1D plot for the top three variables 
+n.trees_opt_c<- gbm.perf(metabric_boost_c,plot.it = FALSE)
+pl<- plot(metabric_boost_c,i.var = c('ILMN_1770085'),n.trees =n.trees_opt_c, type='response',return.grid=TRUE)
+pl_2<-plot(metabric_boost_c,i.var = c('ILMN_1743412'),n.trees =n.trees_opt_c, type='response',return.grid=TRUE)
+pl_3<-plot(metabric_boost_c,i.var = c('ILMN_1735208'),n.trees =n.trees_opt_c, type='response',return.grid=TRUE)
+par(mfrow=c(1,3))
+plot(pl,lwd=3,col='red4')
+plot(pl_2,lwd=3,col='red4')
+plot(pl_3,lwd=3,col='red4')
+
+plot(metabric_boost_c,i.var = c('ILMN_1770085','ILMN_1743412'),n.trees =n.trees_opt_c,type='response')
+
+#the test misclassification error 
+metabric_boost_c_predict<- predict(metabric_boost_c, newdata=metabric_test,type="response", n.trees= n.trees_opt)
+boost_c_table<- with(metabric_test,table(metabric_boost_c_predict, y))
+boost_c_mis_error<- (boost_c_table[1,2]+boost_c_table[2,1])/sum(boost_c_table)
+print(paste("The test misclassification error is",round(boost_c_mis_error,3)))
+
+# the test  AUC
+roc_test<- roc(metabric_test$y,metabric_boost_c_predict)
+auc(roc_test);ci.auc(roc_test)
+```
+
+The top three variable with high relative influence are ILMN_1770085,ILMN_1743412 and ILMN_1735208.
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,92 @@
+---
+title: "Support vector machines"
+output:
+  html_document:
+    df_print: paged
+---
+Learning objective: Train and tune support machines using ``mlR``
+
+### Analysis
+#### Exercise 1
+In this exercise you will reproduce the comparison described in the textbook of support vector machines with different kernels on the heart data.
+
+i. You will first tune an svm with a radial basis function (RBF) kernel with respect to its two parameters $\,C$ and $\,\gamma$
+
+```{r, eval=FALSE}
+library(mlr)
+library(irace)
+
+setwd("/Users/jp/Google Drive/Teaching/Machine Learning/Lectures/Lecture 10 - Classification and regression trees")
+heart = read.csv('Heart.csv')
+heart = heart[complete.cases(heart), ]  
+#####No missing values allowed for SVM
+heart_tsk = makeClassifTask(id = "heart disease", 
+                            data = heart, target = "AHD")
+
+
+split_desc = makeResampleDesc(method='Holdout', stratify = TRUE, split=0.7)
+set.seed(301)
+split = makeResampleInstance(split_desc, task = heart_tsk)
+train = split$train.inds[[1]]; test = split$test.inds[[1]]
+
+
+rbfsvm.lrn = makeLearner("classif.ksvm", par.vals = list(kernel = "rbfdot"), predict.type = "prob")
+
+# Notice the "prob" argument requiring class probabilities are returned
+# How is that possible if SVMs are 0-1 clssifiers??
+# SVMs are indeed 0-1 clssifiers but they can be made to estimate class probabilities 
+# based on the distance to the classification hyperplane: 
+# (the further away the more confident about the classification to the corresponding class)
+
+cv5_stratified = makeResampleDesc("CV", iters=5, stratify = TRUE) 
+# 5-fold CV seems reasonable given the size of the training data
+
+ctrl = makeTuneControlIrace(maxExperiments = 200L)  
+#This tuning control specifies use of the package ``irace`` which efficiently explores the space of tuning parameters to find the best configuration
+
+ps = makeParamSet(
+  makeDiscreteParam("C", values = seq(1e-6, 5, length=10)),
+  makeDiscreteParam("sigma", values = c(1e-3, 1e-2, 1e-1))    # The sigma here parameter is our gamma parameter in the lecture!!
+)
+
+# Again, although SVMs are 0-1 classifiers they can be made to estimate class probabilities 
+# based on the distance to the classification hyperplane: 
+# the further away the more confident about the classification to the corresponding class
+
+heart_svm_tune = tuneParams(rbfsvm.lrn, subsetTask(heart_tsk, train), cv5_stratified, measures=list(auc, mmce), par.set = ps, control = ctrl)
+
+heart_svm_tune
+
+heart_svm_tune$x$C  #This returns the optimal tuning parameters
+
+heart_svm_tune$y #This returns the cross-validated measures of performance
+```
+
+ii. Retrain on the training set using a) the optimal set of parameters (best CV AUC) and b) at the set of parameters with the worst CV AUC. Predict on the test set using both sets of parameters, plot the corresponding test ROC curves, and compute the test AUCs. (hint: remember the ``mlr`` function ``plotROCCurves``.) Based on these results, did parameter tuning make a big difference in performance in this?
+
+iii. Retrain on the full dataset (using the optimal parameter set only)
+
+iv. The code below extends the comparison above to include both and RBF, a polynomial kernel, and the linear kernel (i.e. support vector classifier). Now, RBF, the linear and the polynomial kernels share the cost parameter $\,C$ but also have additional non-shared tuning parameters (the polynomial degree $\,d$ is a tuning parameter only for polynomial kernels and $\,gamma$ is a tuning parameter only for RBF kernels). The code below constructs a set of parameters that enables tuning both shared and non-shared parameters all at once! 
+
+
+```{r, eval=FALSE}
+
+ps_extended = makeParamSet(
+  makeDiscreteParam("kernel", values = c("vanilladot", "polydot", "rbfdot")),
+  makeDiscreteParam("C", values = seq(1e-6, 5, length=10) ),
+  makeDiscreteParam("sigma", values = c(1e-3, 1e-2, 1e-1), requires = quote(kernel == "rbfdot") ), 
+  makeIntegerParam("degree", lower = 1L, upper = 5L, requires = quote(kernel == "polydot") )
+)
+  
+# Notice that the type of kernel itself is a tuning parameter in the specification above!!!
+```
+
+Tune the svm learner using this extended set of parameters ``ps_extended``.
+
+
+v. Explore a wider range of values for $\,C$, $\,\gamma$ and $\,d$ and repeat ii. and iii. Which kernel performed best? What may this say about the nature of the true decision boundary?
+
+
+#### Exercise 2
+Train svms on the metabric data following exercise in a similar way to 2. part iv. of Exercise 1. 
+

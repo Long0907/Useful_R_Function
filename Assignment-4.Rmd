@@ -1,0 +1,464 @@
+---
+title: "PM 591 -- Machine Learning for the Health Sciences."
+author: "Assignment 4 - Luqing Ren"
+date: "Due 3/29/2021"
+output:
+  html_document: default
+---
+
+```{r,include=FALSE}
+library(mlr)
+library(ParamHelpers)
+library(tidyverse)
+library(glmnet)
+```
+
+```{r}
+# load the data set
+breast <- read.csv("/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week4/breast-cancer.data.txt", header = T,stringsAsFactors = T)
+
+breast <- breast [complete.cases(breast), ] #keeps complete cases only
+```
+
+
+```{r}
+# category the predictors
+breast<- 
+  breast %>% 
+  mutate(recurrence =factor(recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence")),
+         age_quant = as.integer(age),
+         tumor_size_quant = factor(tumor_size,
+                          levels = c("0-4","5-9","10-14", "15-19", "20-24", "25-29", "30-34", "35-39","40-44","45-49","50-54"),
+                          labels = c(1,2,3,4,5,6,7,8,9,10,11)),
+         tumor_size_quant = as.integer(tumor_size_quant),
+         inv_nodes_quant = factor(inv_nodes,
+                          levels = c("0-2","3-5","6-8", "9-11", "12-14", "15-17","24-26"),
+                          labels = c(1,2,3,4,5,6,7)),
+         inv_nodes_quant = as.integer(inv_nodes_quant),                       
+         )
+
+```
+
+### Exercise 1 (Analysis) 
+
+You will build and compare several classifiers to predict breast cancer recurrence using the Ljubljana Breast cancer data. The classifiers will include: __standard logistic regression with model selection (forward, backward and best subset)__, __ridge logistic regression__, __LASSO logistic regression__, and __elastic-net logistic regression__. The code to pre-process/transform the data is provided further down.
+
+#### i) Classification with best-subset logistic regression
+
+##### 1）First specify the task and the learner
+
+```{r}
+
+recurrence_tsk = makeClassifTask(id = "Breast Cancer recurrence", 
+                                 data = breast , target = "recurrence")
+
+logreg_lnr =  makeLearner("classif.logreg", 
+                            fix.factors.prediction = TRUE,
+                            predict.type = "prob")
+```
+
+##### 2）drop thee original features
+
+Because re-coded features were added to the ``breast`` data frame we need to drop the original features from the task -- otherwise all features will be used for training:
+
+```{r}
+summarizeColumns(breast)
+
+recurrence_tsk # this shows the description of the task
+
+recurrence_tsk = dropFeatures(recurrence_tsk, features=c("age", "tumor_size", "inv_nodes"))
+
+recurrence_tsk = createDummyFeatures(recurrence_tsk, method="reference") 
+
+# creates dummies for the categorical variables 
+```
+
+So far we have split the data into training and test sets 'manually' but it can also be done in mlR, with the advantage that we can stratify by the outcome to ensure the proportion of observations in the training and test sets are roughly the same as in the complete data set.
+
+```{r}
+# split train/test data sets by mlr
+holdout_desc = makeResampleDesc(method='Holdout', stratify = TRUE)
+
+hold = makeResampleInstance(holdout_desc, task = recurrence_tsk, split=0.7)
+
+train = hold$train.inds[[1]]; test = hold$test.inds[[1]]
+```
+
+##### 3）Specify a resampling strategy and a training subtask
+
+```{r}
+# set training sub-task
+rdesc = makeResampleDesc("CV", iters=10L)
+recurrence_tsk_train = subsetTask(recurrence_tsk, subset=train)
+```
+
+##### 4）Perform best subset feature selection and extract the cross-validated AUC
+
+```{r,warning=FALSE}
+set.seed(201)
+ctrl_best = makeFeatSelControlExhaustive(max.features = 9) 
+#there are 9 features in total 
+
+recurrence_best_select = selectFeatures(learner = logreg_lnr, 
+                          task = recurrence_tsk_train, resampling = rdesc, 
+                          measures = auc, control = ctrl_best, 
+                          show.info = FALSE)
+
+# analyzeFeatSelResult(recurrence_best_select, reduce = TRUE) 
+#this is the cross-validated AUC
+auc_bestselect<-recurrence_best_select$y
+```
+
+- The best model by best-subset logistic regression includes 7 features and the average AUC value is 0.776.
+
+##### 5）Re-difines the task to only use the features selected above and trains the best model on the entire training set.
+
+```{r}
+#  7 features are selected in this method
+recurrence_best_tsk <- subsetTask(recurrence_tsk, features=recurrence_best_select$x) 
+
+#this trains the best CV model on the entire training set
+recurrence_best <- train(learner = logreg_lnr, task = recurrence_best_tsk , subset=train) 
+
+```
+
+#### ii) Classification with forward selection logistic regression
+(Hint: see lecture notes) 
+```{r}
+set.seed(201)
+ctrl_forward <- makeFeatSelControlSequential(method = "sfs", alpha=0.01)
+
+recurrence_best_forward = selectFeatures(learner = logreg_lnr, 
+                          task = recurrence_tsk_train, resampling = rdesc, 
+                          measures = auc, control = ctrl_forward, 
+                          show.info = FALSE)
+
+# analyzeFeatSelResult(recurrence_best_forward, reduce = TRUE)
+auc_bestselectfwd<-recurrence_best_forward$y
+```
+
+- The best model by forward selection logistic regression includes 3 features and the average AUC value is 0.764.
+
+#### iii) Classification with backward selection logistic regression
+```{r}
+set.seed(201)
+ctrl_backward <- makeFeatSelControlSequential(method = "sbs", alpha=-0.001)
+
+recurrence_best_backward = selectFeatures(learner = logreg_lnr, 
+                          task = recurrence_tsk_train, resampling = rdesc, 
+                          measures = auc, control = ctrl_backward, 
+                          show.info = FALSE)
+
+# analyzeFeatSelResult(recurrence_best_backward, reduce = TRUE)
+auc_bestselectback<-recurrence_best_backward$y
+```
+
+- The best model by backward selection logistic regression includes 7 features and the average AUC value is 0.776. The result is the same as best subset feature selection.
+
+#### iv) Classification with LASSO logistic regression, lambda tuned by 10-fold cross-validation 
+
+Specify the learner (the task is the same as above):
+
+```{r}
+set.seed(201)
+# This is logistic regression with the lasso penalty (alpha=1)
+lasso_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=1, type.measure='auc')
+
+```
+
+Note that by specifying ``cv.glmnet`` as the learner, k-fold (10-fold by default) will be automatically used to tune the lambda penalty parameter. This takes advantage of the fast implementation of cross-validation within the ``glmnet`` package rather than cross-validating using the ``mlr` tools ``makeResampleDesc`` and ``resample``.
+
+
+```{r}
+# train the LASSO model on the training data and extract cross-validated auc
+set.seed(201)
+recurrence_lasso = train(learner = lasso_lnr, task = recurrence_tsk, subset=train)
+
+auc_lasso = max(recurrence_lasso$learner.model$cvm)
+
+lambda.min = recurrence_lasso$learner.model$lambda.min #extracts the optimal lambda
+
+print(paste("The AUC of LASSO regression on training data is", round(auc_lasso,3), "when lambda is", which.max(auc_lasso)))
+
+```
+
+
+```{r}
+# Retrain the lasso with optimal lambda on entire data
+set.seed(201)
+lasso_lambda.min_lnr = makeLearner("classif.glmnet", lambda=lambda.min,
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=1)  
+#Creates a new learner where lambda is fixed at the optimal value
+
+recurrence_lasso_final = train(learner = lasso_lambda.min_lnr, task = recurrence_tsk) 
+# trains the lasso model with the optimal lambda on entire data set (test + train) 
+
+```
+
+
+#### v) Classification with ridge logistic regression, lambda tuned by 10-fold cross-validation  
+(Hint: Repeat the steps in 4) but using ridge logistic regression -- alpha=0)
+```{r}
+set.seed(201)
+ridge_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=0, type.measure='auc')
+
+# This is logistic regression with the ridge penalty (alpha=1)
+# Train the ridge model on the training data and extract cross-validated auc
+recurrence_ridge = train(learner = ridge_lnr, task = recurrence_tsk, subset=train)
+auc_ridge = max(recurrence_ridge$learner.model$cvm)
+
+lambda.min_riage = recurrence_ridge$learner.model$lambda.min_ridge #extracts the optimal lambda
+
+print(paste("The auc of ridge regression is", round(auc_ridge,3),"when lambda is", which.max(auc_ridge)))
+```
+
+
+#### vi) Classification with elastic-net logistic regression, lambda tuned by 10-fold cross-validation
+```{r}
+set.seed(201)
+# This is logistic regression with the elastic net penalty (alpha=1)
+elastic_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=0.5, type.measure='auc')
+
+# Train the elastic net model on the training data and extract cross-validated AUC
+recurrence_elastic = train(learner = elastic_lnr, task = recurrence_tsk, subset=train)
+auc_elastic = max(recurrence_elastic$learner.model$cvm)
+
+lambda.min_elastic = recurrence_elastic$learner.model$lambda.min_elastic #extracts the optimal lambda
+
+print(paste("The auc of ridge regression is", round(auc_elastic,3),"when lambda is", which.max(auc_ridge)))
+```
+
+
+#### vii) Which classification method would you choose? How does its performnace compare with that of the model you fitted in Lab 5? Re-fit/train the best performing method on all data (training and test). This is the final model you would use to predict recurrence in new women just diagnosed and treated for breast cancer.
+
+```{r}
+tab<- rbind(auc_bestselect,auc_bestselectfwd,auc_bestselectback,auc_lasso,auc_ridge,auc_elastic)
+tab
+
+# Re-fit/train the best performing method on all data (training and test) and find the final model
+
+#  7 features in this method
+recurrence_best_tsk <- subsetTask(recurrence_tsk, features=recurrence_best_select$x) 
+
+recurrence_best <- train(learner = logreg_lnr, task = recurrence_best_tsk , subset=train) #this trains the best CV model on the entire training set
+
+recurrence_best_predicttest <- predict(recurrence_best, task = recurrence_best_tsk, subset = test) #this predicts on the test set
+
+auc_test <- performance(recurrence_best_predicttest, measures = auc)
+
+recurrence_final = train(learner = logreg_lnr, task = recurrence_best_tsk) # final model trained on all data (training + testing)
+
+recurrence_final $learner.model
+```
+
+- After Comparing the AUC values between these 6 regression methods, either the best-subset logistic regression model and backward selection model including 7 features have the maximum AUC value 0.776. Therefore, the best model is obtained by standard logistic regression with best subset selection method or backward selection model . The best fitted model in lab 5 exercise includes all 9 predictors.
+
+### Exercise 2 (Analysis)
+
+You will build a model to predict psa levels using PCA linear regression using the PSA prostate data
+
+#### i). Load the mlR library and the prostate data
+```{r}
+
+prostate = read.csv("/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week9/prostate.csv")
+prostate = prostate[, -10] #removes the last column which arbitrarily designated observations for training and testing 
+```
+
+#### ii). Specify the regression task and the base linear regression learner. Note: we will not split the data into training and testing because of the modest sample size. Explain whether this invalidates any prediction model we develop and why in practice we always want a test set.
+
+```{r}
+psa_tsk = makeRegrTask(id = "PSA prediction", data = prostate, target = "lpsa")
+
+lm_lrn = makeLearner("regr.lm", fix.factors.prediction = TRUE)
+```
+
+- Train on full data is potentially overestimated the prediction. The regression task bases on linear regression, therefore the model best fits on full data set must have a good predictive performance on the same data set.In practice, we have to split the data set into training set and test set. The never used test set for model prediction will much precisely predict the true trends.
+
+#### iii). Create a new learner adding a PCA pre-processing step to the base learner. In ``mlR`` parlance this is called a wrapped learner. This becomes a new 'composite' learner that can be used just like any of the standard learners we used before. In particular if K-fold CV is used, both the PCA and the linear regression will be used for training on each set of K-1 folds and prediction on the K-th fold. The following is taken from the mlR documentation:
+
+> Wrappers can be employed to extend integrated learners with new functionality. The broad scope of operations and methods which are implemented as wrappers underline the flexibility of the wrapping approach: Data preprocessing, Imputation, Tuning, Feature selection, ....
+
+
+```{r}
+# combines linear regression and PCA into a single learner
+PCA_lm_lrn = makePreprocWrapperCaret(lm_lrn, ppc.pca = TRUE) 
+```
+
+#### iv). Rather than fixing it as in the lecture, we will treat the number of principal components  ``ppc.pcaComp`` as a tuning parameter. Specify ``ppc.pcaComp`` as a an integer tuning parameter ranging from 1 to the number of features in the PSA data
+
+```{r}
+ps = makeParamSet(makeIntegerParam("ppc.pcaComp", lower = 1, upper = getTaskNFeats(psa_tsk)))
+```
+
+
+#### v). Create a control object for hyperparameter tuning with grid search.
+
+```{r}
+ctrl = makeTuneControlGrid(resolution = 10) 
+# resolution is the number of points in the grid of values for the tuning parameter. Since there are 8 possible PCs we want resolution >= 8
+```
+
+#### vi). Perform the tuning
+
+```{r}
+tuneParams(PCA_lm_lrn, task=psa_tsk, cv5, par.set = ps, control = ctrl, show.info = FALSE)
+```
+
+-All 8 features are selected as  principal components. The average MSE is 0.54.
+
+#### vii). How many principal components are selected? Does pre-processing by PCA help in this case?
+```{r}
+set.seed(101)
+PCA_lm_lrn_tune = makePreprocWrapperCaret(lm_lrn, ppc.pca = TRUE,ppc.pcaComp = 8) 
+
+psa_benchmark <- benchmark(list(lm_lrn,PCA_lm_lrn_tune),psa_tsk,cv5,show.info = FALSE)
+psa_benchmark
+```
+
+- All 8 features are selected as principal components. The MSE values between linear regression and pre-processing PCA are the exactly same. Therefore, using 8 PCs does not improve prediction.
+
+
+
+### Exercise 3 (Analysis)
+You will build a classifier to predict cancer specific death among breast cancer patients within 1-year of diagnosis based on a subset of 1,000 gene expression features from the Metabric data using ridge and lasso logistic regression. (The metabric data contains close to 30,000 gene expression features, here we use a subset to keep computation times reasonable for this in class Lab. In the homework version you will use the full feature set)
+
+#### i). Load the mlr library and the Metabric data
+
+```{r}
+# load metabric data 
+
+load('/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week9/metabric.Rdata') 
+```
+
+#### ii). Check the dimension of the metabric dataframe using ``dim`` check the number of deaths using ``table`` on the binary outcome variable
+```{r}
+dim(metabric)
+table(metabric$y)
+```
+
+- There are totally 803 patients and 1,001 gene expression features in data set. 146 people dead within 1- year after diagnosis.
+
+#### iii). Split the data into training (70%) and test (30%)
+```{r}
+metabric_tsk = makeClassifTask(id= "One-year breast-cancer mortality", data=metabric,target = "y")
+
+split_desc= makeResampleDesc(method="Holdout",stratify = TRUE, split=0.7)
+
+set.seed(201)
+
+split = makeResampleInstance(split_desc, task = metabric_tsk)
+
+metabric_train = split$train.inds[[1]]; metabric_test = split$test.inds[[1]]
+```
+
+#### iv). Create an appropriate mlR task
+```{r}
+# create the mlR task on the subset of training set
+metabric_tsk_train = subsetTask(metabric_tsk, subset=metabric_train)
+```
+
+#### v). Create lasso and ridge learners using "classif.cvglmnet" (Recall that by specifying ``cv.glmnet`` as the learner, k-fold (10-fold by default) will be automatically used to tune the lambda penalty parameter. This takes advantage of the fast implementation of cross-validation within the ``glmnet`` package rather than cross-validating using the ``mlr`` tools ``makeResampleDesc`` and ``resample``)
+```{r}
+set.seed(2021)
+# LASSO learner
+metabric_lasso_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                               predict.type = "prob",
+                              alpha=1, type.measure='auc')
+# ridge learner
+metabric_ridge_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                               predict.type = "prob",
+                              alpha=0, type.measure='auc')
+```
+
+#### vi). Train the LASSO and the ridge model on the training data using CV with an appropriate performance measure (hint: you can check the available measures for your task using ``listMeasures``). Extract the cross-validated measure of performance. Why is the CV measure of performance the relevant metric to compare models? 
+```{r}
+set.seed(201)
+# lasso regression
+metabric_CVlasso = train(learner=metabric_lasso_lnr,task= metabric_tsk_train)
+metabric_auc_lasso = max(metabric_CVlasso$learner.model$cvm)
+
+# ridge regression
+metabric_CVridge = train(learner=metabric_ridge_lnr,task= metabric_tsk_train)
+metabric_auc_ridge = max(metabric_CVridge$learner.model$cvm)
+
+
+tab2<- rbind(metabric_auc_lasso,metabric_auc_ridge)
+colnames(tab2) <- c( "maximum AUC")
+tab2
+```
+
+#### vii). Which method performs best? What does this say about the likely nature of the true relationship between the expression features and the outcome?
+
+- According the AUC values of two methods, the ridge logistic regression method provides the maximum AUC value 0.766. Therefore, ridge logistic regression perform better. 
+
+#### viii). Report an 'honest' estimate of prediction performance.
+```{r}
+
+# pick the min.lambda model
+#lasso regression predict on test set
+set.seed(201)
+metabric_lambda.min_lasso = metabric_CVlasso$learner.model$lambda.min
+metabric_lasso_lambda.min_lnr = makeLearner("classif.glmnet", lambda=metabric_lambda.min_lasso,
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=1)   
+metabric_lasso_fit = train(metabric_lasso_lambda.min_lnr, metabric_tsk_train)
+metabric_lasso_predict = predict(metabric_lasso_fit, newdata=metabric[metabric_test,])
+metabric_lasso_fit_auc= performance(metabric_lasso_predict,measure=auc)
+
+#ridge regression predict on test set
+
+metabric_lambda.min_ridge = metabric_CVridge $learner.model$lambda.min
+metabric_ridge_lambda.min_lnr = makeLearner("classif.glmnet", lambda=metabric_lambda.min_ridge ,
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=0)   
+metabric_ridge_fit = train(metabric_ridge_lambda.min_lnr, metabric_tsk_train)
+metabric_ridge_predict = predict(metabric_ridge_fit,newdata=metabric[metabric_test,])
+metabric_ridge_fit_auc= performance(metabric_ridge_predict,measure=auc)
+
+
+tab3<- rbind(metabric_lasso_fit_auc,metabric_ridge_fit_auc)
+colnames(tab3) <- c( "maximum AUC on testset")
+tab3
+```
+
+#### ix). Re-train the best performing method on all the data (training and test). This is the final model you would use to predict death in new women just diagnosed and treated for breast cancer. Why is this ok and why is this better than simply using the model trained on just the training data? 
+
+```{r}
+metabric_ridge_final = train(learner= metabric_ridge_lambda.min_lnr, task= metabric_tsk)
+# trains the ridge model with the optimal lambda on entire data set (test + train) 
+metabric_ridge_final 
+```
+
+- The metabric data set is a high-dimensional data set, model fit only on training set has highly potential of overfitting. Tune the parameter of lambda in training set and predict the model on test set is helpful to get a good predictive performance.
+
+#### x). The dataset ``new_expression_profiles`` contains the gene expression levels for 15 women just diagnosed with breast cancer. Estimate their one-year survival probabilities.
+
+```{r, message=FALSE,warning=FALSE}
+
+new<-read_csv("/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week9/new_expression_profiles.csv")
+
+new_pred<- predict(metabric_ridge_final,newdata = new[,-1])
+
+new_prob<- getPredictionProbabilities(new_pred)
+
+new_prob
+```
+
+

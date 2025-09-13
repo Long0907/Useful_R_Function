@@ -1,0 +1,389 @@
+---
+title: "PM 591 -- Machine Learning for the Health Sciences."
+author: "Assignment-2   Luqing Ren"
+date: "Due 2/25/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(FNN)
+library(pROC)
+library(ggplot2)
+library(vcd)
+library(MASS)
+```
+<br>
+
+### Analysis
+
+1.  Brain weight data. 
+    a. Using the function ``KNN.reg`` in the ``FNN`` package to construct predictive models for brain weight using __KNN regression__ for $K=1,..,15$ on a training set (use the exact same training/validation split--same seed and same split percentages--you used for linear regression). Hint: use a for loop to iterate over $K$.
+    
+    a. Plot the validation RMSE as a function of $K$ and select the best K.
+```{r}
+brain<-read.table("/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week2/brain.txt", header = T)
+set.seed(2020)
+n <- nrow(brain)
+data <-sample( 1:n,  floor(0.7*n))
+braintrain<- brain[data,]
+brainvalidation<-brain[-data,]
+```
+
+```{r}
+rmse <- function(observed, predicted) {
+  sqrt(mean((observed - predicted)^2))
+  } 
+```
+
+```{r}
+
+rmse_val_KNN <- rep(0,15)
+for(i in c(1:15)){
+  fit_KNN <- knn.reg(train = braintrain[,-4,drop=FALSE], test =    brainvalidation[,-4,drop=FALSE],y= braintrain$Brain.weight,k=i ) 
+  rmse_val_KNN [[i]]<- rmse (brainvalidation$Brain.weight,fit_KNN$pred)
+}
+
+# plot the validation RMSEs
+par(mar=c(5,5,1,1))
+plot(1:15,rmse_val_KNN, xlab = "k value", ylab = "validation RMSEs",main= "validation RMSEs and K value",type = "b")
+abline(v= which.min(rmse_val_KNN),col="red",lwd=2,lty=2)
+
+print(paste("The minimum validation RMSE", round(min(rmse_val_KNN),2), "is obtained when k=", which.min(rmse_val_KNN)))
+```
+    
+    c. Using the validation RMSE compare to the best linear regression model from homework 1. Is there an improvement in prediction performance?  Interpret your results based on the bias-variance tradeoff.
+
+From the validation RMSEs plot, the smallest RMSE value is 79.67 when k=6. 
+The RMSE values in the train set of linear regression model is 73.058. The KNN regression RMSE is higher than the linear regression model fitted by sex,age and head size. Using the KNN regression will result in low bias but high variance in prediction,which explains the deterioration in prediction performance.
+
+
+<br>
+
+2.  The goal of this exercise is to fit several LDA and logistic regression classifiers for breast cancer recurrence using the Ljubljana Breast cancer data. The code to pre-process/transform the data is provided below.
+
+    a. Split the data into training (70%), and validation (30%). (Becasue of the moderate sample size we will not have a separate test set -- we will soon learn about cross-validation, which will allow us to split the data into training and test data (no validation) and still perform model selection)
+
+```{r}
+# load the data set
+cancer<- read.csv("breast-cancer.data.txt", header = T,stringsAsFactors = T)
+# category the predictors
+cancer<- 
+  cancer %>% 
+  mutate(recurrence =factor(recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence")),
+         age_quant = as.integer(age),
+         tumor_size_quant = factor(tumor_size,
+                          levels = c("0-4","5-9","10-14", "15-19", "20-24", "25-29", "30-34", "35-39","40-44","45-49","50-54"),labels = c(1,2,3,4,5,6,7,8,9,10,11)),
+         tumor_size_quant = as.integer(tumor_size_quant),
+         inv_nodes_quant = factor(inv_nodes,
+                          levels = c("0-2","3-5","6-8", "9-11", "12-14", "15-17","24-26"),labels = c(1,2,3,4,5,6,7)),
+        inv_nodes_quant = as.integer(inv_nodes_quant),                       
+         deg_malig = factor(deg_malig,levels=1:3,labels = c("Range1","Range2","Range3"))
+        ) 
+
+# split the data into training 70% and validation 30%
+
+set.seed(2021)
+n<- nrow(cancer)
+train<- sample(1:n, floor((0.7)*n))
+cancer_train<- cancer[train,c(-2,-4,-5)] 
+cancer_vali<- cancer[-train,c(-2,-4,-5)] # drop the original variable: age,tumor_size, inv_nodes
+```
+
+    b. Using the training data, graphically assess each of the 9 predictors using a boxplot for quantitative predictors and a mosaic plot for a categorical predictors (for the transformed predictors use the quantitative versions instead of the original categorical versions). Note: you can use plot to get these graphs. Use ``plot(recurrence, your_predictor)`` to get a boxplot for a quantitative predictor and ``plot(your_predictor, recurrence)`` for a categorical predictor to get a mosaic plot. 
+  __Visually determine the 3 most most predictive variables,__ i.e. the variables that best separate the recurrent and non-recurrent classes. (This is an informal procedure since a visual assessment is inherently subjective).
+```{r}
+#box plots for the quantitative predictors and recurrence
+par(mfrow=c(3,3),mar=rep(4,4)) 
+for(i in c("age_quant", "tumor_size_quant","inv_nodes_quant")){
+  
+  plot(cancer_train$recurrence,cancer_train[,i],cex=1.5,ylab=i, xlab="Events", main=paste("Events and",i))
+  
+}
+
+for(i in c("menopause", "node_caps","deg_malig","side","quadrant","irradiat")){
+  
+  plot(cancer_train[,i],cancer_train$recurrence,cex=1.5,ylab=i, xlab="Events", main=paste("Events and",i))
+  
+}
+
+#plot_age<-boxplot(age_quant~recurrence,data=cancer_train)
+#plot_size<-boxplot(tumor_size_quant~recurrence,data=cancer_train)
+#plot_inv<-boxplot(inv_nodes_quant~recurrence,data=cancer_train)
+
+```
+    
+The three most predictive variables are inv_nodes_quant, node_caps and deg_malig.
+
+    c. Build LDA classifiers of increasing complexity by including: i) the most predictive variable, ii) the two most predictive variables, iii) the three most predictive variables and iv) all the 9 predictor variables.
+```{r}
+# LDA classifiers including the most predictive variable
+LDA <- lda(recurrence~node_caps, data= cancer_train)
+
+# LDA classifiers including the most 2 predictive variables
+LDA_2 <- lda(recurrence~node_caps+inv_nodes_quant, data= cancer_train)
+
+# LDA classifiers including the most 3 predictive variables
+LDA_3 <- lda(recurrence~node_caps+inv_nodes_quant+deg_malig, data= cancer_train)
+
+# LDA classifiers including all the 9 predictive variables 
+LDA_4 <- lda(recurrence~., data= cancer_train)
+
+```
+    
+    d. Write an R function ``classificationError`` to compute the overall misclassification error, specificity, and sensitivity of a classifier. The function shoud take a confusion matrix as its input (which you can create using ``table`` as shown in the lecture) and return a vector with the overall misclassication error, specificity and sensitivity. (Hint: separately compute the three quantities ``error``, ``spec``, and ``sens`` inside the body of the function and then put them together in a vector using ``c(error=error, sensitivity=sens, specificity=spec)`` in the last line of the body of the function before the closing curly bracket -- its last line is by default what a function returns)
+```{r}
+classificationError<- function(model,data) {
+  
+  pred_lda = predict(model,data)
+  confMatrix = table(true= data$recurrence,predicted= pred_lda$class)
+  error = (confMatrix[1,2]+confMatrix[2,1])/sum(confMatrix)
+  sens= confMatrix[2,2]/(confMatrix[2,1]+confMatrix[2,2])
+  spec=confMatrix[1,1]/(confMatrix[1,1]+confMatrix[1,2])
+  return(c(error=error,sensitivity=sens, specificity= spec))
+  
+}
+```
+    
+    e. Compute the training and validation errors for each of the classifiers in e. Which classifier would you choose?
+```{r, message=FALSE,warning=FALSE}
+# training error:LDA classifiers including the most predictive variable
+e1<- classificationError(LDA,cancer_train)
+# LDA classifiers including the most 2 predictive variables
+e2<-classificationError(LDA_2,cancer_train)
+# LDA classifiers including the most 3 predictive variables
+e3<-classificationError(LDA_3,cancer_train)
+# LDA classifiers including all the 9 predictive variables 
+e4<-classificationError(LDA_4,cancer_train)
+
+tab1<- rbind(e1,e2,e3,e4)
+rownames(tab1)<- c("one predictor:","two predictors:","three predictors:","all predictors:")
+tab1
+
+# validation error:LDA classifiers including the most predictive variable
+e5<-classificationError(LDA,cancer_vali)
+# LDA classifiers including the most 2 predictive variables
+e6<-classificationError(LDA_2,cancer_vali)
+# LDA classifiers including the most 3 predictive variables
+e7<-classificationError(LDA_3,cancer_vali)
+# LDA classifiers including all the 9 predictive variables 
+e8<-classificationError(LDA_4,cancer_vali)
+
+tab2<- rbind(e5,e6,e7,e8)
+rownames(tab2)<- c("one predictor:","two predictors:","three predictors:","all predictors:")
+tab2
+
+```
+The classifier with all predictors has the lowest validation error. Therefore, the classifier with 9 predictors is the best method.
+
+    f. Plot in the same graph the training and test misclassification error as a function of classifier complexity
+```{r}
+par(mfrow=c(1,3),mar= rep(2,4))
+
+plot(c(1,2,3,9),c(e1[1],e2[1],e3[1],e4[1]),pch=16,col='red4',
+     xlab = "LDA classification", ylab = "error",ylim = c(0.1,0.35),main="misclassification error",type = "b")
+points(c(1,2,3,9),c(e5[1],e6[1],e7[1],e8[1]),pch=16,col='steelblue',type = "b")
+legend("bottomleft",legend=c("train error", "validation error"),
+       col=c("red4", "steelblue"), pch=20,cex=0.8)
+
+plot(c(1,2,3,9),c(e1[2],e2[2],e3[2],e4[2]),pch=16,col='red4',
+     xlab = "LDA classification", ylab = "sensitivity",ylim = c(0.1,0.5),main="sensitivity",type = "b")
+points(c(1,2,3,9),c(e5[2],e6[2],e7[2],e8[2]),pch=16,col='steelblue',type = "b")
+legend("bottomleft",legend=c("train sensitivity", "validation sensitivity"),
+       col=c("red4", "steelblue"), pch=20,cex=0.8)
+
+plot(c(1,2,3,9),c(e1[3],e2[3],e3[3],e4[3]),pch=16,col='red4',
+     xlab = "LDA classification", ylab = "specificity",ylim = c(0,1),main="specificityy",type = "b")
+points(c(1,2,3,9),c(e5[3],e6[3],e7[3],e8[3]),pch=16,col='steelblue',type = "b")
+legend("bottomleft",legend=c("train specificity", "validation specificity"),
+       col=c("red4", "steelblue"), pch=20,cex=0.8)
+
+```
+
+The train misclassification error value of these 4 LDA classifiers in c are 0.26,0.26,0.26,0.25 respectively, which indicates that the model within all the predictive variables in it is the most complex classifier model.In addition,the model within all 9 predictive variable has the highest sensitivity value, which is the proportion of true recurrence identified. In addition, this model also has a higher specificity value compared to other 3 models.Therefore, the model including all predictive variables is the best classifier.
+
+
+    h. Train a logistic regression classifier on the training data using all the available (recoded) features. Although we do not focus on inference, the parameter estimates and their corresponding p-values can give us a sense of variable importance for developing predictive models. Based on the estimated logistic regression coefficients and their p-values, which variables seem most predictive? Compare with the graphical assessement in b.
+```{r}
+cancer_glm <- glm(recurrence~., family= "binomial",data= cancer_train )
+summary(cancer_glm)
+```
+
+Compared with other variables, deg_malig variable is significant associated with recurrence(p=0.00527). However, the indicators node_caps,irradiat and menopause, which are considered the most three predictive variables are not statistically significant in logistic regression model.
+  
+    i. Build logistic regression classifiers of increasing complexity by including: i) the most predictive variable, ii) the two most predictive variables, iii) the three most predictive variables and iv) all the 9 predictor variables.
+```{r}
+# logistic regression classifiers including the most predictive variable
+glm<- glm(recurrence~deg_malig, family= "binomial",data= cancer_train )
+# logistic regression classifiers including the most 2 predictive variables
+glm_2<- glm(recurrence~deg_malig+irradiat, family= "binomial",data= cancer_train )
+# logistic regression classifiers including the most 3 predictive variables
+glm_3<- glm(recurrence~deg_malig+inv_nodes_quant+irradiat, family= "binomial",data= cancer_train )
+
+# logistic regression classifiers including all predictive variables
+cancer_glm <- glm(recurrence~., family= "binomial",data= cancer_train )
+```
+
+    j. Use the ``predict`` function with the option ``type = response`` to compute the estimated probability of recurrence for the observations in the validation set. Classify the observations to the ``recurrence`` and ``no-recurrence`` class based a probability cutoff/threshold of $p=1/2$. Use the function ``classificationError`` you wrote above to compute the overall misclassification error for the classifiers you built in i. Choose the best classifier based on misclassification error.
+```{r,warning=FALSE}
+classificationError_glm <- function(model,data){
+  
+  pred_glm_test <- factor(predict(model, data, type='response')>0.5)
+  levels(pred_glm_test) =c("no-recurrence","recurrence")
+  confMatrix_glm =table(true = data$recurrence,predicted = pred_glm_test)
+  return(c(AUC= c(auc(data$recurrence,predict(model,data,type="response"))), error = (confMatrix_glm[1,2]+confMatrix_glm[2,1])/sum(confMatrix_glm),sensitivity= confMatrix_glm[2,2]/(confMatrix_glm[2,1]+confMatrix_glm[2,2]),specificity=confMatrix_glm[1,1]/(confMatrix_glm[1,1]+confMatrix_glm[1,2])))
+  
+}
+
+g1<-classificationError_glm (glm,cancer_vali)
+g2<-classificationError_glm (glm_2,cancer_vali)
+g3<-classificationError_glm (glm_3,cancer_vali)
+g4<-classificationError_glm (cancer_glm,cancer_vali)
+tab3<- rbind(g1,g2,g3,g4)
+rownames(tab3) <- c("one predictor:","two predictors:","three predictors:","all predictors:")
+tab3
+
+g5<-classificationError_glm (glm,cancer_train)
+g6<-classificationError_glm (glm_2,cancer_train)
+g7<-classificationError_glm (glm_3,cancer_train)
+g8<-classificationError_glm (cancer_glm,cancer_train)
+tab4<- rbind(g5,g6,g7,g8)
+rownames(tab4) <- c("one predictor:","two predictors:","three predictors:","all predictors:")
+tab4
+
+
+
+```
+
+    k. Using the function ``auc`` in package ``pROC`` compute the training and validation AUC for each of the classifiers in i. Is the best classifier based on AUC the same as the one in e. based on misclassification error? 
+    l. Plot in the same graph the training and test misclassification error as a function of classifier complexity and in a separte graph plot both the training and test AUC as a function of classifier complexity. Comment on the shape of these curves.
+```{r,message=FALSE}
+par(mfrow=c(1,2),mar= rep(2,4))
+
+# AUC plot
+plot(c(1,2,3,9),c(g1[1],g2[1],g3[1],g4[1]),pch=16,col='red4',
+     xlab = "logistic classification", ylab = "AUC",ylim = c(0,1),main="AUC value",type = "b")
+points(c(1,2,3,9),c(g5[1],g6[1],g7[1],g8[1]),pch=16,col='steelblue',
+     xlab = "logistic classification", ylab = "AUC",ylim = c(0,1),main="AUC value",type = "b")
+
+legend("bottomleft",legend=c("train AUC", "validation AUC"),
+       col=c( "steelblue","red4"), pch=20,cex=0.8)
+
+# error plot
+plot(c(1,2,3,9),c(g1[2],g2[2],g3[2],g4[2]),pch=16,col='red4',
+     xlab = "logistic classification", ylab = "AUC",ylim = c(0,0.5),main="misclassification error",type = "b")
+points(c(1,2,3,9),c(g5[2],g6[2],g7[2],g8[2]),pch=16,col='steelblue',
+     xlab = "logistic classification", ylab = "AUC",ylim = c(0,1),main="misclassification error",type = "b")
+
+legend("bottomleft",legend=c("train error", "validation error"),
+       col=c( "steelblue","red4"), pch=20,cex=0.8)
+
+
+```
+
+After computing the training set and validation set AUC values for each classifiers in i, the model including all predictive variables has the highest training and validation AUC. The logistic classifier with all predictive variables has the lowest training and validation classification error , which indicates that all predictive variables classifier is the best classifier.
+In conclusion, including all the predictive variables is the best classifier, which is consistent with the conclusion in e.
+
+   
+### Conceptual
+
+1. The goal of this exercise is to gain a deeper understanding of the trade-off between sensitivity and specificity and the ROC curve. Assume a binary classification problem with a single quantitative predictor $X$. Assume that you know the true distribution of $X$ for each of the two classes (in practice these distributions would not be known but can be estimated as its done in LDA). Specifically, $\,X \sim N(\mu=-1, \sigma=1)$ in the negative class $\,Y=0$ and $\,X \sim N(\mu=2, \sigma=1)$ in the positive class $\,Y=1$. 
+Assume also that the two classes are equally likely. 
+
+  a. Derive the posterior probabilities  $\, P(Y=0 \;|\; X=x)$ and $\, P(Y=1 \;|\; X=x)$. 
+
+$\, P(Y=1 \;|\; X=x) = \, P(X=x \;|\; Y=1 ) *  P(Y=1) / P(X=x)$
+$\, P(Y=0 \;|\; X=x) = 1-\, P(Y=1 \;|\; X=x )$ 
+   
+  b. Derive the Bayes rule that classifies an observation with $\,X=x$ to $\,Y=1$ if $\, P(Y=1 \;|\; X=x) > P(Y=0 \;|\; X=x)$
+  
+
+\[
+Y = \begin{cases}
+  0 & \text{if} \quad \, P(Y=1 \;|\; X=x) <= P(Y=0 \;|\; X=x) \\
+  1 & \text{if} \quad \, P(Y=1 \;|\; X=x) > P(Y=0 \;|\; X=x)
+\end{cases}
+\]
+
+
+  c. Show that there is a cuttof $\,t_{Bayes}$ such that the Bayes rule can be expressed as:
+\[
+Y = \begin{cases}
+  0 & \text{if} \quad x \le t_{Bayes} \\
+  1 & \text{if} \quad x > t_{Bayes}
+\end{cases}
+\]
+
+\[
+Y = \begin{cases}
+  0 & \text{if} \quad x \le 1/2 \\
+  1 & \text{if} \quad x > 1/2
+\end{cases}
+\]
+
+
+  d. Compute the specificity, sensitivity, false positive rate, false negative rates, and overall misclassification rate for the Bayes rule. (Hint: recall you can use the R function ``pnorm`` to compute the probability that a normal variable exceeds or is below a given threshold) 
+```{r}
+sens<- 1-pnorm(0.5,2,1)
+spec<- pnorm(0.5,-1,1)
+false_pos <-1-pnorm(0.5,-1,1)
+false_neg<-pnorm(0.5,2,1)
+overall_error<- (false_pos+false_neg)/2
+ 
+round(c(sensitivity =sens,specificity=spec, false_positive = false_pos, false_negative=false_neg, overall_error = overall_error ),3)
+```
+    
+  e. Consider now the more general decision rule (below) with arbitrary cutoff $t$ (not necessarily $\,t_{Bayes}$).  Compute the specificity, sensitivity, false positive rate, false negative rates, and overall misclassification rate for a grid of 20 equally spaced values of the cutoff $t$ ranging from $t=-4$ to $t=6$. (Hint: use ``seq`` to generate the grid and a ``for`` loop to iterate over the grid values.)
+
+\[
+Y = \begin{cases}
+  0 & \text{if} \quad x \le t \\
+  1 & \text{if} \quad x > t
+\end{cases}
+\]
+```{r}
+grid_sens <- list(rep(0,20))
+grid_spec <- list(rep(0,20))
+grid_false_pos <-list(rep(0,20))
+grid_false_neg <- list(rep(0,20))
+grid_error <- list(rep(0,20))
+t <- seq(-4,6,length.out=20)
+
+for (i in 1:20){
+  grid_sens[i] = 1-pnorm(t[i],2,1)
+  grid_spec[i] = pnorm(t[i],-1,1)
+  grid_false_pos[i] = 1-pnorm(t[i],-1,1)
+  grid_false_neg[i] = pnorm(t[i],2,1)
+  grid_error[i] = 1-pnorm(t[i],-1,1)+pnorm(t[i],2,1)
+}
+```
+ 
+  f. Plot in the same graph the sensitivity, specificity and misclassification rate as a function of $t$.  Interpret the plot and comment on the cutoff where the minimum misclassification rate is attained.
+```{r}
+par(mar=c(5,5,1,1))
+plot(t,grid_sens,col='red4', xlab = "t value",ylab="", pch=16,type = "b")
+points(t,grid_spec,col='blue',pch=16,type = "b")
+points(t,grid_error,col='black',pch=16,type = "b")
+
+legend("left",legend=c( "sensitivity ","specificity","error"), col=c("red4", "blue","black"), pch=20,cex=0.8)
+abline(v=0.5,col="grey",lwd=2,lty=2)
+```
+
+When the  cutoff is 0.737, it has the highest sensitivity value 0.897 and specificity value 0.959 with the lowest misclassification error 0.144. 
+
+
+  g. Plot the ROC curve.
+
+```{r}
+par(mar=c(5,5,1,1))
+plot(1-unlist(grid_sens),grid_spec, pch=16, col='red4',xlab="1-sensitivity",ylab="specificity" )
+lines(1-unlist(grid_sens),grid_spec,col='red4')
+
+```
+
+
+

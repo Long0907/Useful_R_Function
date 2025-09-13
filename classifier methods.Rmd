@@ -1,0 +1,99 @@
+---
+title: "classifier methods"
+author: "Luqing Ren"
+date: "3/20/2021"
+output: html_document
+---
+
+classifier methods: 
+
+1. __logistic regression:__
+
+```{r}
+model<- glm(recurrence~., data=breast, family= "binomial")
+summary(model)
+ 
+# function of  AUC / misclassification error / sensitivity / specificity
+classificationError_glm <- function(model,data){
+  
+  pred_glm_test <- factor(predict(model, data, type='response')>0.5)
+  levels(pred_glm_test) =c("no-recurrence","recurrence")
+  confMatrix_glm =table(true = data$recurrence,predicted = pred_glm_test)
+  return(c(AUC= c(auc(data$recurrence,predict(model,data,type="response"))), error = (confMatrix_glm[1,2]+confMatrix_glm[2,1])/sum(confMatrix_glm),sensitivity= confMatrix_glm[2,2]/(confMatrix_glm[2,1]+confMatrix_glm[2,2]),specificity=confMatrix_glm[1,1]/(confMatrix_glm[1,1]+confMatrix_glm[1,2])))
+  
+}
+
+# example of a table of predictive matrix
+
+tab3<- rbind(g1,g2,g3,g4)
+rownames(tab3) <- c("one predictor:","two predictors:","three predictors:","all predictors:")
+
+
+# AUC 
+library(pROC)
+predicted_glm = predict(model,newdata)
+roc_glm = roc(newdata$name, predicted_glm,ci=TRUE, of='auc')
+AUC= auc(roc_glm)
+# ROC curve plot
+plot(roc_glm,lwd=4,col='red4',cex.axis=1.3,cex.lab=1.3)
+
+```
+
+2. __LDA/QDA:__
+
+```{r}
+# LDA: 
+LDA <- lda(recurrence~., data= cancer_train)
+
+# error function
+classificationError<- function(model,data) {
+  
+  pred_lda = predict(model,data)
+  confMatrix = table(true= data$recurrence,predicted= pred_lda$class)
+  error = (confMatrix[1,2]+confMatrix[2,1])/sum(confMatrix)
+  sens= confMatrix[2,2]/(confMatrix[2,1]+confMatrix[2,2])
+  spec=confMatrix[1,1]/(confMatrix[1,1]+confMatrix[1,2])
+  return(c(error=error,sensitivity=sens, specificity= spec))
+  
+}
+
+# plot example: 
+par(mfrow=c(1,3),mar= rep(2,4)) # three panels in one plot
+
+plot(c(1,2,3,9),c(e1[1],e2[1],e3[1],e4[1]),pch=16,col='red4',
+     xlab = "LDA classification", ylab = "error",ylim = c(0.1,0.35),main="misclassification error",type = "b")
+points(c(1,2,3,9),c(e5[1],e6[1],e7[1],e8[1]),pch=16,col='steelblue',type = "b")
+legend("bottomleft",legend=c("train error", "validation error"),
+       col=c("red4", "steelblue"), pch=20,cex=0.8)
+
+
+# QDA:
+library(MASS)
+library(pROC)
+breast_qda <- qda(recurrence~., data)
+predicted_qda <- predict(breast_qda, newdata$posterior[,'recurrence'])
+roc_qda <- roc(newdata$reecurrence, predicted_qda,ci=TRUE)
+
+AUC= auc(roc_qda)
+
+# ROC curve plot
+plot(roc_qda,lwd=4,col='red4',cex.axis=1.3,cex.lab=1.3)
+
+```
+
+3. train and test a logistic regression "mlr" package 
+
+
+
+
+
+
+
+
+
+
+
+every method including two coding methods: __regular for loop__, __mlr__
+1. KNN :  __tuning k value by mlr using a for loop__, __tuning k value by mlr without a for loop__
+
+2. cross-validation: k-fold CV, repeated k-fold CV, LOOCV : __tuning k value by mlr using a for loop__, __tuning k value by mlr without a for loop__

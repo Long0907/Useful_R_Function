@@ -1,0 +1,263 @@
+---
+title: "PM 591 -- Machine Learning for the Health Sciences."
+author: "Assignment 3"
+date: "Due 3/8/2021"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+<br>
+
+### Analysis 
+Exercise 1
+
+NOTE: this exercise has a couple of added items (marked **NEW**) compared to the Lab 6 version. You will build a KNN classifier to predict breast cancer recurrence using the Ljubljana Breast cancer data and tune the complexity parameter $\,K$ using k-fold cross validation. (Note: the $\, K$ in KNN and the $\, k$ in k-fold cross validation are not the same K! The $\, K$ in KNN refers to the number of nearest neighbors and the $\, k$ in k-fold cross validation refers to the number of folds used to cross-validate). Tuning the $\, K$ parameter in KNN means choosing the value of $\, K$ that minimizes the validation error. The code to pre-process/transform the data is provided below (identical to that used for LDA and logistic regression in Labs 4 and 5). You will use the ``mlr`` package that makes many common machine learning tasks much more efficient. 
+
+a. Summarize the Breast cancer data using the ``mlR`` function ``summarizeColumns``. Notice that the summary includes information about missing values and number of levels for categorical variables.
+```{r}
+summary <- summarizeColumns(brest)
+```
+
+<br>
+
+b. Split the data into training (70%), and validation (30%) as usual:
+
+$\hspace{2em}$ ``set.seed(303)``
+
+$\hspace{2em}$ ``n = nrow(breast)``
+
+$\hspace{2em}$ ``train = sample(n, size = floor(0.7*n))``
+
+$\hspace{2em}$ ``validation = setdiff(1:n, train)  # equivalent to (1:n)[-train]``
+```{r}
+
+```
+
+<br>
+
+c. Specify the learning task (classification) using the ``makeClassifTask`` function. We will only use "deg_malig","inv_nodes_quant" as predictors:
+
+      ``       breast.tsk = makeClassifTask(id = "Breast Cancer Recurrence",
+      ``                                       data = breast[, c("recurrence", "deg_malig","inv_nodes_quant")],`` 
+      ``                                       target = "recurrence")``
+                    
+
+$\hspace{2em}$ The 'id' argument is just a name used later for labeling results. 
+The `data` argument specifies the data.frame where the data is stored. 
+$\hspace{2em}$ The `target` argument specifies the outcome variable. All feature variables in the data set will be used as predictors. 
+
+$\hspace{2em}$ ``breast[, c("recurrence", "deg_malig","inv_nodes_quant")]``
+```{r}
+
+```
+
+<br>
+
+d. Specify the learner/model/algorithm (KNN with K=1)
+
+$\hspace{2em}$ ``breast.lrn = makeLearner("classif.knn", k=1, fix.factors.prediction = TRUE)``
+
+$\hspace{2em}$ The fix.factors.prediction = T argument ensures proper dealing with the levels of a factor when splitting the data for cross-validation
+```{r}
+
+```
+
+<br>
+
+e. Train the classifier using the ``train`` function on the training data:
+
+$\hspace{2em}$ ``breast_1NN = train(breast.lrn, breast.tsk, subset = train)``
+```{r}
+
+```
+
+<br>
+
+f. Predict using validation set, compute the confusion matrix and measures of performance:
+
+$\hspace{2em}$ ``breast_predict = predict(breast_1NN, task = breast.tsk, subset = validation)``
+
+$\hspace{2em}$ ``calculateConfusionMatrix(breast_predict)``
+
+$\hspace{2em}$ ``performance(breast_predict, measures = list(mmce, acc)) #misclassification error and accuracy``
+```{r}
+
+```
+
+<br>
+
+g. Repeat steps d-f for KNN  with $\,K=1,2,3,...,30$ 
+
+$\hspace{2em}$ Hint 1: use a for loop 
+
+$\hspace{2em}$ Hint 2: reset the learner for using KNN with $\, K = i$ using:
+
+$\hspace{2em}$ ``breast.lrn = makeLearner("classif.knn", k=i, fix.factors.prediction = TRUE)``
+```{r}
+
+```
+
+<br>
+
+h. Plot the misclassification error as a function of $\,K$. Which model do you choose? Why?
+```{r}
+
+```
+
+i. **NEW** Repeat the whole process (steps b. to c.) 5 times with different random training/validation splits. Plot the 5 curves analog to the one obtained in h. in the same graph. Do you choose the same value of $\,K$ for each of the 5 splits? What does this say about the stability/variability of using a single training/validation split to perform model selection? 
+
+$\hspace{2em}$ Hint 1: use nested loops: 
+
+$\hspace{3em}$ The inner loop to iterate over $\,K=1,2,3,...,30$ as you did above. 
+
+$\hspace{3em}$ The outer loop to iterate over the 5 replications of the entire procedure.
+
+$\hspace{2em}$ Hint 2:  Set the seed just one time outside the outer loop. Each split will then be automatically different from the others
+```{r}
+
+```
+
+<br>
+
+j. You will now perform 10-fold cross-validation to evaluate the KNN classifier with $\, K = 1$ instead of a single training/validation split.
+
+$\hspace{2em}$ Reset to use $\,K = 1$ ``breast.lrn = makeLearner("classif.knn", k=1, fix.factors.prediction = TRUE)``
+
+$\hspace{2em}$ Perform cross-validation using the ``crossval`` function:
+
+$\hspace{2em}$ ``cv_val = crossval(breast.lrn, breast.tsk, iters = 10L, stratify = TRUE, measures=mmce)``
+
+$\hspace{2em}$ ``cv_val``
+ 
+$\hspace{2em}$You can extract the actual misclassification error from the object returned by crossval using ``cv_val$aggr``
+
+      NOTE: ``stratify = TRUE`` ensures that each fold has (approximately) the same proportion of observations in the positive (recurrence) and negative (non-recurrence) class as the full data set.
+```{r}
+
+```
+
+<br>
+
+k. You will now perform tuning of the $\,K$ parameter by examiming the cross-validation error rather than the single-split validation error.  Repeat steps h. for KNN  with  $\,K=1,2,3,...,30$
+
+$\hspace{2em}$ Hint 1: use a for loop. 
+
+$\hspace{2em}$ Hint 2: reset the learner for using KNN with $\, K = i$ as above.
+```{r}
+
+```
+
+<br>
+
+l. Plot the cross-validation misclassification error as a function of $\,K$. Which model do you choose? Do you chose the same model you selected in h.? If diferent, which one would you prefer? Why? 
+```{r}
+
+```
+
+m. **NEW** Repeat the whole 10-fold cross-validation process (steps j. to l.) 5 times with different random cross-validation folds. Plot the 5 curves analogs to the one obtained in l. in the same graph. Do you choose the same value of $\,K$ for each of the 5 splits? Compare the variability of the coross-validation curves to that of the single training/validation splits in i.
+```{r}
+
+```
+
+
+### Analysis/conceptual 
+
+Exercise 2
+
+The ``mlR`` package allows the user to easily tune a parameter without a loop like in Exercise 1. You will now tune the  $\, K$ parameter directly using the tools provided in ``mlr`` using validation and several forms of cross-validation including:  leave-one-out cross-validation, k-fold cross validation,  repeated k-fold cross validation. You will compare the tuning of the complexity parameter $\,K$ using a validation set and all these different forms of cross-validation. 
+
+Step 1:  To tune the complexity parameter $\,K$ in KNN the first setp is to specify the range of values of using $\,K$ we want to consider using the ``mlr`` function ``makeParamSet``:
+
+```{r, eval=FALSE}
+Kvals = makeParamSet(makeDiscreteParam("k", values = 1:30)) # set to explore values K=1,...,30
+```
+
+Step 2:  Specify the type of resampling task (or simple validation):
+
+For single training/validation split:
+
+```{r, eval=FALSE}
+breast_holdout = makeResampleDesc("Holdout", stratify=TRUE) # default split: 2/3 training, 1/3 validation
+```
+
+For leave-one-out cross-validation:
+
+```{r, eval=FALSE}
+breast_LOO = makeResampleDesc("LOO")
+```
+
+Again, setting ``stratify=TRUE`` ensures the same proportion of observations in the positive and negative classes as in the full dataset for each of the CV folds:
+
+For K-fold cross-validation:
+
+```{r, eval=FALSE}
+breast_10CV = makeResampleDesc("CV", iters = 10L, stratify=TRUE)
+```
+
+For repeated K-fold cross-validation:
+
+```{r, eval=FALSE}
+breast_RepCV = makeResampleDesc("RepCV", reps=5L, folds = 10L, stratify=TRUE)
+```
+
+Step 3: Use the function ``makeTuneControlGrid`` to set internal control parameters to perform the tuning:
+
+```{r, eval=FALSE}
+ctrl = makeTuneControlGrid() # here we use the defaults so we don't specify any parameters
+```
+
+Step 4: perform the actual tuning. For example, using the tuning from the single split validation method:
+
+```{r, eval=FALSE}
+breast_holdout_tune = tuneParams("classif.knn", task = breast.tsk, resampling = breast_holdout,
+                 par.set = Kvals, control = ctrl, measures=mmce)
+```
+
+You can extract the error for all values of $\,K$ using:
+
+```{r, eval=FALSE}
+generateHyperParsEffectData(breast_holdout_tune)$data
+```
+
+a. Specify the learning task (classification) using the ``makeClassifTask`` function. We will only use "deg_malig","inv_nodes_quant" as predictors:
+
+```{r, eval=FALSE}
+breast.tsk = makeClassifTask(id = "Breast Cancer Recurrence", data = breast[, c("recurrence", "deg_malig","inv_nodes_quant")], target = "recurrence")
+```
+
+Tune the $\,K$ parameter using i) a single validation set, ii) LOO CV, iii) K-fold CV, iV) repeated K-fold CV. Does tuning select the same value of $\,K$ using each of the methods? Why? Comment on the tuning times for each method and explain the differences.
+
+b. Plot the misclassification error for each of the CV methods above (including the single validation split method) as a function of $\,K$ on the same graph. 
+
+c. After parameter tuning one should retrain the model using the full training data. Select a value of $\,K$ based on the tuning in a. and retrain the model using all the data (in our case we did not set aside a test set, so the full data is our training set). For example, using the tuning from the single split validation method you can specify the learner as:
+
+```{r, eval=FALSE}
+breast_lrn_tuned = setHyperPars(makeLearner("classif.knn"), par.vals = breast_holdout_tune$x)
+```
+
+d. Repeat step a. 5 times (the tuning, no need to re-specify the learning task) using a for loop. On a separate graph for each CV method plot the 5 replicate curves. Explain the different variabilities observed among the different CV methods.
+
+Hint: since there are four validation/CV methods explored you can split the plotting area in 4 (two rows and two columns) with ``par(mfrow=c(2,2))`` before doing any plotting. Each plot you generate with ``plot`` will now be displayed in each of the 4 plotting areas respectively. This makes visual comparisons among the 4 plots much easier.
+
+
+```{r}
+breast = read.csv("/Users/jp/Google Drive/Teaching/Machine Learning/2021/Lectures/Lecture 4 - LDA/breast-cancer.data.txt", header=T, stringsAsFactors = TRUE) #stringsAsFactors = TRUE ensures all string variables are read in as factors
+
+breast = breast[complete.cases(breast), ] #keeps complete cases only
+
+breast$recurrence = factor(breast$recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence"))  #renames levels using shorter names
+
+breast$age_quant = as.integer(breast$age)  # creates a new quantitative age variable 
+
+breast$tumor_size_quant = factor(breast$tumor_size, levels=levels(breast$tumor_size)[c(1,10,2,3,4,5,6,7,8,9,11)]) #reorders levels
+levels(breast$tumor_size_quant) # creates a new quantitative tumor size variable
+
+breast$inv_nodes_quant = factor(breast$inv_nodes, levels(breast$inv_nodes)[c(1,5,6,7,2,3,4)]) 
+```
+    
+

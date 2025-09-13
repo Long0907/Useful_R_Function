@@ -1,0 +1,283 @@
+---
+title: "Cross-validation II"
+output:
+  html_document:
+    df_print: paged
+---
+Learning objectives.
+
+- Evaluate a classifier using __different cross-validation approaches__ in mlr.
+- Perform __feature selection__ (best, forward, backward) using mlr (subset selection) 
+
+### Analysis/conceptual 
+Exercise 1
+
+You will build a KNN classifier to predict breast cancer recurrence using the Ljubljana Breast cancer data. The ``mlR`` package allows the user to easily __tune a parameter__ (without a loop like in Lab 6) using a validation set and several __resampling schemes__ including: leave-one-out cross-validation, k-fold cross validation, repeated k-fold cross validation. You will compare the tuning of the complexity parameter $\,K$ using a validation set and all these different forms of cross-validation. The code to pre-process/transform the data -- identical to that used in Labs 4, 5 and 6-- is provided further down.
+
+
+Step 1:  To tune the complexity parameter $\,K$ in KNN the first step is to specify the range of values of using $\,K$ we want to consider using the ``mlr`` function ``makeParamSet``:
+
+```{r, eval=FALSE}
+Kvals <- makeParamSet(makeDiscreteParam("k", values = 1:30)) 
+# set to explore values K=1,...,30
+```
+
+Step 2:  Specify the type of resampling task (or simple validation):
+
+__1.For single training/validation split:__
+
+```{r, eval=FALSE}
+cancer_holdout = makeResampleDesc("Holdout", stratify=TRUE) 
+# default split: 2/3 training, 1/3 validation
+```
+
+__2.For leave-one-out cross-validation:__
+
+```{r, eval=FALSE}
+cancer_LOO = makeResampleDesc("LOO")
+```
+
+Setting ``stratify=TRUE`` ensures the same proportion of observations in the positive and negative classes as in the full data set for each of the CV folds:
+
+__3.For K-fold cross-validation:__
+
+```{r, eval=FALSE}
+cancer_10CV = makeResampleDesc("CV", iters = 10L, stratify=TRUE)
+```
+
+__4.For repeated K-fold cross-validation:__
+
+```{r, eval=FALSE}
+cancer_RepCV = makeResampleDesc("RepCV", reps=50L, folds = 10L, stratify=TRUE)
+```
+
+Step 3: Use the function ``makeTuneControlGrid`` to set internal control parameters to perform the tuning:
+
+```{r, eval=FALSE}
+ctrl = makeTuneControlGrid() 
+# here we use the defaults so we don't specify any parameters
+```
+
+Step 4: perform the actual tuning. For example, using the tuning from the single split validation method:
+
+```{r, eval=FALSE}
+cancer_holdout_tune = tuneParams("classif.knn", task = cancer.tsk, resampling = cancer_holdout, par.set = Kvals, control = ctrl, measures=mmce)
+```
+
+You can extract the error for all values of $\,K$ using:
+
+```{r, eval=FALSE}
+generateHyperParsEffectData(cancer_holdout_tune)$data
+```
+
+a. Specify the learning task (classification) using the ``makeClassifTask`` function. We will only use "deg_malig","inv_nodes_quant" as predictors:
+
+```{r, eval=FALSE}
+cancer.tsk = makeClassifTask(id = "Breast Cancer Recurrence", data = cancer[, c("recurrence", "deg_malig","inv_nodes_quant")], target = "recurrence")
+```
+
+Tune the $\,K$ parameter using i) a single validation set, ii) LOO CV, iii) K-fold CV, iV) repeated K-fold CV. Does tuning select the same value of $\,K$ using each of the methods? Why? Comment on the tuning times for each method and explain the differences.
+
+```{r}
+library(mlr)
+library(ParamHelpers)
+library(tidyverse)
+# load the data set
+cancer <- read.csv("/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week4/breast-cancer.data.txt", header = T,stringsAsFactors = T)
+
+cancer <- cancer [complete.cases(cancer), ] #keeps complete cases only
+
+# category the predictors
+cancer<- 
+  cancer %>% 
+  mutate(recurrence =factor(recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence")),
+         age_quant = as.integer(age),
+         tumor_size_quant = factor(tumor_size,
+                          levels = c("0-4","5-9","10-14", "15-19", "20-24", "25-29", "30-34", "35-39","40-44","45-49","50-54"),
+                          labels = c(1,2,3,4,5,6,7,8,9,10,11)),
+         tumor_size_quant = as.integer(tumor_size_quant),
+         inv_nodes_quant = factor(inv_nodes,
+                          levels = c("0-2","3-5","6-8", "9-11", "12-14", "15-17","24-26"),
+                          labels = c(1,2,3,4,5,6,7)),
+         inv_nodes_quant = as.integer(inv_nodes_quant),                       
+         )
+
+table(cancer$tumor_size_quant,cancer$tumor_size)
+```
+
+```{r}
+# single validation set tuning the K parameter by "mlr"
+set.seed(123)
+cancer_holdout_tune = tuneParams("classif.knn", task = cancer.tsk, resampling = cancer_holdout, par.set = Kvals, control = ctrl, measures=mmce)
+a<-generateHyperParsEffectData(cancer_holdout_tune)$data
+
+
+print(paste(c("The minimum misclassification errror is obtained at K=", which(a$mmce.test.mean==min(a$mmce.test.mean))),collapse = " "))
+```
+
+
+```{r}
+# LOOCV tuning the K parameter by "mlr"
+set.seed(123)
+cancer_LOO_tune = tuneParams("classif.knn", task = cancer.tsk, resampling = cancer_LOO, par.set = Kvals, control = ctrl, measures=mmce)
+b<-generateHyperParsEffectData(cancer_LOO_tune)$data
+
+print(paste(c("The minimum misclassification errror is obtained at K=", which(b$mmce.test.mean==min(b$mmce.test.mean))),collapse = " "))
+```
+
+
+```{r}
+#K-fold tuning the K parameter by "mlr"
+set.seed(123)
+cancer_10CV_tune = tuneParams("classif.knn", task = cancer.tsk, resampling = cancer_10CV, par.set = Kvals, control = ctrl, measures=mmce)
+c<-generateHyperParsEffectData(cancer_10CV_tune)$data
+
+print(paste(c("The minimum misclassification errror is obtained at K=", which(c$mmce.test.mean==min(c$mmce.test.mean))),collapse = " "))
+
+```
+
+
+```{r}
+# repeated k-fold tuning K parameter by "mlr"
+set.seed(123)
+cancer_RepCV_tune = tuneParams("classif.knn", task = cancer.tsk, resampling = cancer_RepCV, par.set = Kvals, control = ctrl, measures=mmce)
+d<-generateHyperParsEffectData(cancer_RepCV_tune)$data
+
+print(paste(c("The minimum misclassification errror is obtained at K=", which(d$mmce.test.mean==min(d$mmce.test.mean))),collapse = " "))
+
+```
+
+b. Plot the misclassification error for each of the CV methods above (including the single validation split method) as a function of $\,K$ on the same graph. 
+
+```{r}
+error<- data.frame(a$k,a$mmce.test.mean,b$mmce.test.mean,c$mmce.test.mean,d$mmce.test.mean)
+
+methods <- c("holdout", "LOO", "10CV", "RepCV")
+
+matplot(error$a.k,error[,2:5],type = "o",col=1:4, lty=1,lwd=2,pch=1,xlab = "k",ylab = "Mean misclassification error",main= "Mean misclassification error of four methods")
+
+legend("topleft", methods, pch=1, lty=1,cex=0.75,lwd=2,col=1:4)
+```
+
+c. After parameter tuning one should retrain the model using the full training data. Select a value of $\,K$ based on the tuning in a. and retrain the model using all the data (in our case we did not set aside a test set, so the full data is our training set). For example, using the tuning from the single split validation method you can specify the learner as:
+
+```{r, eval=FALSE}
+breast_lrn_tuned = setHyperPars(makeLearner("classif.knn"), par.vals = breast_holdout_tune$x)
+```
+
+
+d. Repeat step a. 5 times (the tuning, no need to re-specify the learning task) using __a for loop.__ On a separate graph for each CV method plot the 5 replicate curves. Explain the different variabilities observed among the different CV methods.
+
+Hint: since there are four CV methods you can split the plotting area in 4 (two rows and two columns) with ``par(mfrow=c(2,2))`` before doing any plotting. Each plot you generate with ``plot`` will now be displayed in each of the 4 plotting areas respectively. This makes visual comparisons among the 4 plots much easier.
+
+```{r}
+par(mfrow = c(2,2))
+methods<- c("holdout","10CV","LOO","RepCV")
+for(i in 1:4){
+  temp<- matrix(NA,5,30)
+  
+  for (k in 1:5) {
+    cancer_holdout_tune = tuneParams("classif.knn",task = cancer.tsk,show.info = FALSE,resampling = get(paste("cancer",methods[i],sep = "_")), par.set = Kvals,control = ctrl, measures = mmce)
+    temp[k,] <- generateHyperParsEffectData(cancer_holdout_tune)$data[,2]
+    
+  }
+  matplot(t(temp),type = "o", lty=1,lwd=2, pch=1, cex=0.4, xlab = "K",ylab = "Mean misclassification error", main=paste(methods[i],"for 5 replications"),ylim= c(0.1,0.4))
+  
+}
+
+```
+
+__ Based on the result of four methods over a range of K values, I choose K=5 for the minimum mean classification error was obtained for two methods including the 10-fold CV and repeated CV.
+
+### Analysis
+Exercise 2
+
+You will perform __feature selection__ (forward, backward and best subset) for logistic regrsssion classification to predict breast cancer recurrence using the Ljubljana Breast cancer data. , ridge logistic regression, and LASSO logistic regression. The code to pre-process/transform the data is provided further down.
+
+##### a) Classification with best-subset logistic regression
+
+First specify the task and the learner. Because recoded features were added to the ``breast`` dataframe we need to drop the original features from the task -- otherwise all features will be used for training:
+
+
+```{r, eval=FALSE}
+summarizeColumns(breast)
+
+recurrence_tsk = makeClassifTask(id = "Breast Cancer recurrence", 
+                                 data = breast, target = "recurrence", positive="recurrence") 
+
+recurrence_tsk # this shows the description of the task
+
+recurrence_tsk = dropFeatures(recurrence_tsk, features=c("age", "tumor_size", "inv_nodes"))
+
+recurrence_tsk # check that the original features have been removed
+```
+
+logreg_lnr =  makeLearner("classif.logreg", 
+                            fix.factors.prediction = TRUE,
+                            predict.type = "prob")
+
+```
+
+So far we have split the data into training and test sets 'manually', but it can also be done in mlR, with the advantage that we can stratify by the outcome/class to ensure the proportion of observations in each class (positive = recurrence and negative = non-recurrence) in the training and test sets are roughly the same as in the complete data set.
+
+```{r, eval=FALSE}
+
+holdout_desc = makeResampleDesc(method='Holdout', stratify = TRUE)
+
+hold = makeResampleInstance(holdout_desc, task = recurrence_tsk, split=0.7)
+
+train = hold$train.inds[[1]]; test = hold$test.inds[[1]]
+```
+
+Specify a resampling strategy and specify that training will be performed on the training data only using 'subsetTask'
+
+```{r, eval=FALSE}
+
+rdesc = makeResampleDesc("CV", iters=10L)
+
+recurrence_tsk_train = subsetTask(recurrence_tsk, subset=train)
+```
+
+Perform best subset feature selection and extract the cross-validated AUC
+
+```{r, eval=FALSE}
+
+ctrl_best = makeFeatSelControlExhaustive(max.features = 9) #there are 9 features in total 
+
+recurrence_best = selectFeatures(learner = logreg_lnr, 
+                          task = recurrence_tsk_train, resampling = rdesc, 
+                          measures = auc, control = ctrl_best, 
+                          show.info = TRUE)
+
+auc_best = recurrence_best$y
+
+
+```
+
+##### 2) Classification with forward selection logistic regression
+(Hint: see lecture notes) 
+
+##### 3) Classification with backward selection logistic regression
+
+<br>
+
+```{r}
+breast = read.csv("/Users/jp/Google Drive/Teaching/Machine Learning/2021/Lectures/Lecture 4 - LDA/breast-cancer.data.txt", header=T, stringsAsFactors = TRUE) #stringsAsFactors = TRUE ensures all string variables are read in as factors
+
+breast = breast[complete.cases(breast), ] #keeps complete cases only
+
+breast$recurrence = factor(breast$recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence"))  #renames levels using shorter names
+
+breast$age_quant = as.integer(breast$age)  # creates a new quantitative age variable 
+
+breast$tumor_size_quant = factor(breast$tumor_size, levels=levels(breast$tumor_size)[c(1,10,2,3,4,5,6,7,8,9,11)]) #reorders levels
+breast$tumor_size_quant = as.integer(breast$tumor_size_quant) # creates a new quantitative tumor size variable
+
+breast$inv_nodes_quant = factor(breast$inv_nodes, levels(breast$inv_nodes)[c(1,5,6,7,2,3,4)]) 
+breast$inv_nodes_quant = as.integer(breast$inv_nodes_quant) #creates a new quantitative invasive nodes variable
+```
+    

@@ -1,0 +1,134 @@
+---
+title: "Model selection and shrinkage methods"
+output:
+  html_document:
+    df_print: paged
+---
+Learning objectives.
+
+
+- Perform ridge, lasso, and elastic net **logistic regression** using mlR -- compare results with subset selection (done in last Lab)
+
+### Analysis
+
+You will build and compare several classifiers to predict breast cancer recurrence using the Ljubljana Breast cancer data. The classifiers will include: standard logistic regression with model selection (best subset), ridge, LASSO and elastic-netlogistic regression. The code to pre-process/transform the data is provided further down.
+
+##### 1) Classification with best-subset logistic regression (this is part of Lab 7 -- it is repeated here so you can compare with lasso and Enet regression)
+
+First specify the task and the learner
+
+```{r, eval=FALSE}
+
+library(mlr)
+
+recurrence_tsk = makeClassifTask(id = "Breast Cancer recurrence", 
+                                 data = breast, target = "recurrence", positive="recurrence") 
+
+logreg_lnr =  makeLearner("classif.logreg", 
+                            fix.factors.prediction = TRUE,
+                            predict.type = "prob")
+
+```
+
+Because recoded features were added to the ``breast`` dataframe we need to drop the original features from the task -- otherwise all features will be used for training:
+
+```{r, eval=FALSE}
+summarizeColumns(breast)
+
+recurrence_tsk # this shows the description of the task
+
+recurrence_tsk = dropFeatures(recurrence_tsk, features=c("age", "tumor_size", "inv_nodes"))
+
+recurrence_tsk # check that the original features have been removed
+```
+
+
+So far we have split the data into training and test sets 'manually', but it can also be done in mlR, with the advantage that we can stratify by the outcome/class to ensure the proportion of observations in each class (positive = recurrence and negative = non-recurrence) in the training and test sets are roughly the same as in the complete data set.
+
+```{r, eval=FALSE}
+
+holdout_desc = makeResampleDesc(method='Holdout', stratify = TRUE)
+
+hold = makeResampleInstance(holdout_desc, task = recurrence_tsk, split=0.7)
+
+train = hold$train.inds[[1]]; test = hold$test.inds[[1]]
+```
+
+Specify a resampling strategy and specify that training will be performed on the training data only using 'subsetTask'
+
+```{r, eval=FALSE}
+
+rdesc = makeResampleDesc("CV", iters=10L)
+
+recurrence_tsk_train = subsetTask(recurrence_tsk, subset=train)
+```
+
+Perform best subset feature selection and extract the cross-validated AUC
+
+```{r, eval=FALSE}
+
+ctrl_best = makeFeatSelControlExhaustive(max.features = 9) #there are 9 features in total 
+
+recurrence_best = selectFeatures(learner = logreg_lnr, 
+                          task = recurrence_tsk_train, resampling = rdesc, 
+                          measures = auc, control = ctrl_best, 
+                          show.info = TRUE)
+
+auc_best = recurrence_best$y
+
+
+
+```
+
+##### 2) Classification with LASSO logistic regression, lambda tuned by 10-fold cross-validation 
+
+Specify the learner (the task is the same as above):
+
+```{r, eval=FALSE}
+
+lasso_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=1, type.measure='auc')
+
+# This is logistic regression with the lasso penalty (alpha=1)
+```
+
+Note that by specifying ``cv.glmnet`` as the learner, k-fold (10-fold by default) will be automatically used to tune the lambda penalty parameter. This takes advantage of the fast implementation of cross-validation within the ``glmnet`` package rather than cross-validating using the ``mlr`` tools ``makeResampleDesc`` and ``resample``.
+
+Train the LASSO model on the training data and extract cross-validated auc
+
+```{r, eval=FALSE}
+recurrence_lasso = train(learner = lasso_lnr, task = recurrence_tsk, subset=train)
+
+auc_lasso = max(recurrence_lasso$learner.model$cvm)
+```
+
+
+##### 3) Classification with ridge logistic regression, lambda tuned by 10-fold cross-validation  
+Hint: Repeat the steps in 4) but using ridge logistic regression -- alpha=0
+
+
+##### 4) Classification with ridge logistic regression, lambda tuned by 10-fold cross-validation  
+Hint: Repeat the steps in 4) but using elastic-net logistic regression -- alpha=0.5 (any 0 < alpha < 1, corresponds to elastic-net) 
+
+
+
+```{r}
+breast = read.csv("/Users/jp/Google Drive/Teaching/Machine Learning/2021/Lectures/Lecture 4 - LDA/breast-cancer.data.txt", header=T, stringsAsFactors = TRUE) #stringsAsFactors = TRUE ensures all string variables are read in as factors
+
+breast = breast[complete.cases(breast), ] #keeps complete cases only
+
+breast$recurrence = factor(breast$recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence"))  #renames levels using shorter names
+
+breast$age_quant = as.integer(breast$age)  # creates a new quantitative age variable 
+
+breast$tumor_size_quant = factor(breast$tumor_size, levels=levels(breast$tumor_size)[c(1,10,2,3,4,5,6,7,8,9,11)]) #reorders levels
+breast$tumor_size_quant = as.integer(breast$tumor_size_quant) # creates a new quantitative tumor size variable
+
+breast$inv_nodes_quant = factor(breast$inv_nodes, levels(breast$inv_nodes)[c(1,5,6,7,2,3,4)]) 
+breast$inv_nodes_quant = as.integer(breast$inv_nodes_quant) #creates a new quantitative invasive nodes variable
+```
+ 

@@ -1,0 +1,211 @@
+---
+title: "QDA, KNN Classification and Cross-validation. "
+output:
+  html_document:
+    df_print: paged
+---
+Learning objectives.
+
+- Fit QDA and KNN models in R
+- Tune the K parameter (number of neighbors) in KNN classification using validation and cross-validation.
+
+### Analysis 
+1) You will build a __KNN classifier__ to predict breast cancer recurrence using the Breast cancer data and tune the complexity parameter $\,K$ using __a validation set__ and using __k-fold cross validation__. (Note: the $\, K$ in KNN and the $\, k$ in k-fold cross validation are not the same K! The $\, K$ in KNN refers to the number of nearest neighbors and the $\, k$ in k-fold cross validation refers to the number of folds used to cross-validate). Tuning the $\, K$ parameter in KNN means choosing the value of $\, K$ that minimizes the validation error. The code to pre-process/transform the data is provided below (identical to that used for LDA and logistic regression in Labs 4 and 5). In this lab you will start using the ``mlr`` package that makes many common machine learning tasks much simpler.
+
+a. Summarize the Breast cancer data using the ``mlR`` function ``summarizeColumns``. Notice that the summary includes information about missing values and number of levels for categorical variables.
+```{r Summarize}
+library(mlr)
+library(ParamHelpers)
+library(tidyverse)
+# load the data set
+cancer<- read.csv("/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week4/breast-cancer.data.txt", header = T,stringsAsFactors = T)
+
+# category the predictors
+cancer<- 
+  cancer %>% 
+  mutate(recurrence =factor(recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence")),
+         age_quant = as.integer(age),
+         tumor_size_quant = factor(tumor_size,
+                          levels = c("0-4","5-9","10-14", "15-19", "20-24", "25-29", "30-34", "35-39","40-44","45-49","50-54"),labels = c(1,2,3,4,5,6,7,8,9,10,11)),
+         tumor_size_quant = as.integer(tumor_size_quant),
+         inv_nodes_quant = factor(inv_nodes,
+                          levels = c("0-2","3-5","6-8", "9-11", "12-14", "15-17","24-26"),labels = c(1,2,3,4,5,6,7)),
+        inv_nodes_quant = as.integer(inv_nodes_quant),                       
+         ) 
+
+summarizeColumns(cancer)
+```
+
+<br>
+
+b. Split the data into training (70%), and validation (30%) as usual:
+
+``set.seed(303)``
+
+``n = nrow(breast)``
+
+``train = sample(n, size = floor(0.7*n))``
+
+``validation = setdiff(1:n, train)  # equivalent to (1:n)[-train]``
+
+```{r split data set}
+set.seed(303)
+n<- nrow(cancer)
+train <- sample(n, size = floor(0.7*n))
+validation <- setdiff(1:n, train) 
+```
+
+<br>
+
+c. (Make sure you have downloaded and installed the `mlr` package before this exercise.) Specify the learning task (classification) using the ``makeClassifTask`` function. We will only use "deg_malig","inv_nodes_quant" as predictors:
+
+``breast.tsk = makeClassifTask(id = "Breast Cancer Recurrence", data = breast[, c("recurrence", "deg_malig","inv_nodes_quant")], target = "recurrence")``
+```{r}
+cancer.tsk <- makeClassifTask(id = "Breast Cancer Recurrence", data = cancer[, c("recurrence", "deg_malig","inv_nodes_quant")], target = "recurrence")
+```
+
+The 'id' argument is just a name used later for nice labeling. The `data` argument specifies the data.frame where the data is stored. The `target` argument specifies the outcome variable. Because not all features/variables in the data set will be used as predictors we specify ``breast[, c("recurrence", "deg_malig","inv_nodes_quant")]`` to select just "recurrence", "deg_malig", and "inv_nodes_quant".
+
+<br>
+
+d. Specify the learner/model/algorithm (KNN with K=1)
+
+``breast.lrn = makeLearner("classif.knn", k=1, fix.factors.prediction = TRUE)``
+```{r}
+cancer.lrn <- makeLearner("classif.knn", k=1, fix.factors.prediction = TRUE)
+```
+
+The fix.factors.prediction = T argument ensures proper dealing with the levels of a factor when splitting the data for cross-validation
+
+<br>
+
+e. Train the classifier using the ``train`` function on the training data:
+
+``breast_1NN = train(breast.lrn, breast.tsk, subset = train)``
+```{r}
+cancer_1NN <- train(cancer.lrn, cancer.tsk, subset = train)
+```
+
+<br>
+
+f. Predict in the validation set and compute the confusion matrix and measures of performance:
+
+``breast_predict = predict(breast_1NN, task = breast.tsk, subset = validation)``
+
+``calculateConfusionMatrix(breast_predict)``
+
+``performance(breast_predict, measures = list(mmce, acc)) #misclassification error and accuracy``
+```{r}
+#predict in validation set
+cancer_predict <- predict(cancer_1NN,cancer.tsk,sunset = validation)
+#evaluate the performance
+calculateConfusionMatrix(cancer_predict)
+#misclassification error and accuracy
+performance(cancer_predict, measures = list(mmce, acc))
+```
+
+<br>
+
+g. Repeat steps d-f for KNN  with $\,K=1,2,3,...,30$ 
+
+Hint 1: use a for loop 
+
+Hint 2: reset the learner for using KNN with $\, K = i$ using:
+
+``breast.lrn = makeLearner("classif.knn", k=i, fix.factors.prediction = TRUE)``
+```{r}
+cancer.lrn_rep <- list(rep(NA,30))
+cancer_1NN_rep <- list(rep(NA,30))
+cancer_predict_rep <- list(rep(NA,30))
+metric_rep <- list(rep(NA,30))
+
+for (i in c(1:30)){
+# reset the learner 
+cancer.lrn_rep[[i]] <- makeLearner("classif.knn", k=i, fix.factors.prediction = TRUE)
+cancer_1NN_rep[[i]] <- train(cancer.lrn_rep[[i]], cancer.tsk, subset = train)
+cancer_predict_rep[[i]] <- predict(cancer_1NN_rep[[i]],cancer.tsk, sunset = validation)
+
+metric_rep [[i]] <- performance(cancer_predict_rep[[i]], measures = list(mmce))
+}
+```
+
+<br>
+
+h. Plot the misclassification error as a function of $\,K$. Which model do you choose? Why?
+```{r}
+plot(c(1:30), metric_rep,pch=16,col='red4', xlab = "k value", ylab = "misclassification error",main="misclassification error"  )
+```
+
+When k value is 1, the model has the smallest misclassification error. However, the model will be overfitted when k=1. As we can see in the plot, when k equals to 2,3,4,7, these models have the same value of misclassification error. As a result, according single-split validation misclassification error values, either model 2,3,4,7 is good. 
+
+<br>
+
+i. You will now perform 5-fold cross-validation to evaluate the KNN classifier with $\, K = 1$ instead of a single training/validation split.
+
+Reset to use $\,K = 1$ 
+``breast.lrn = makeLearner("classif.knn", k=1, fix.factors.prediction = TRUE)``
+
+Perform cross-validation using the ``crossval`` function:
+
+``cv_val = crossval(breast.lrn, breast.tsk, iters = 5L, stratify = TRUE, measures=mmce)``
+``cv_val``
+```{r}
+cv_val <- crossval(cancer.lrn, cancer.tsk, iters = 5L, stratify = TRUE, measures=mmce)
+```
+ 
+You can extract the actual misclassification error from the object returned by crossval using ``cv_val$aggr``
+
+NOTE: ``stratify = TRUE`` ensures that each fold has (approximately) the same proportion of observations in the positive (recurrence) and negative (non-recurrence) class as the full data set.
+```{r}
+# extract the average misclassification error value
+cv_val$aggr
+```
+
+<br>
+
+i. You will now perform tuning of the $\,K$ parameter by examining the cross-validation error rather than the single-split validation error.  Repeat steps h. for KNN  with  $\,K=1,2,3,...,30$
+
+Hint 1: use a for loop 
+
+Hint 2: "reset" the learner for using KNN with $\, K = i$ as above.
+```{r}
+cancer.lrn_cross <- list(rep(NA,30))
+cv_val_cross <- list(rep(NA,30))
+cv_val_error <-list(rep(NA,30))
+
+for (i in c(1:30)){
+# reset the learner 
+cancer.lrn_cross[[i]] <- makeLearner("classif.knn", k=i, fix.factors.prediction = TRUE)
+cv_val_cross[[i]] <- crossval(cancer.lrn_cross[[i]], cancer.tsk, iters = 5L, stratify = TRUE, measures=mmce)
+cv_val_error[[i]] <- cv_val_cross[[i]]$aggr
+}
+
+```
+
+<br>
+
+j. Plot the cross-validation misclassification error as a function of $\,K$. Which model do you choose? Do you chose the same model you selected in h.? If different, which one would you prefer? Why? 
+```{r}
+plot(c(1:30), cv_val_error, pch=16,col='blue', xlab = "k value", ylab = "misclassification error",main="5 fold cross-validation misclassification error"  )
+```
+When the k value is 5, the model has the smallest misclassification error by 5-fold cross validation method. The result is different from the single-split validation error. As a result, the best model is when k is 5 by 5-fold cross-validation method. 
+
+
+2) Train a QDA classification model on the training data in 1) using the mlr package. Compute the validation and 5-fold CV misclasification error
+
+Hint: use the task in 1c (the task is the same!) and create a QDA learner via:
+
+```{r}
+cancer.lrn_qda <- makeLearner("classif.qda", predict.type = "prob", fix.factors.prediction = TRUE)
+cv_val_qda <- crossval(cancer.lrn_qda, cancer.tsk, iters = 5L, stratify = TRUE, measures=mmce)
+error_qda <- cv_val_qda$aggr
+error_qda
+```
+
+
+
+<br>
+
+

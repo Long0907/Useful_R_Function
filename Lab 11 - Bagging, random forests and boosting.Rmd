@@ -1,0 +1,143 @@
+---
+title: "Classification and Regression Trees"
+output:
+  html_document:
+    df_print: paged
+---
+Learning objectives: Bagging, random forest and boosting using R packages ``randomForest`` and ``gbm``.
+
+### Analysis
+Compare the performance of __classification trees__ (already done in Lab 10 so you can just cut and paste), __bagging__, __random forests__, and __boosting__ for predicting heart disease based on the ``heart`` data.
+
+i. Split the data into training and testing. Train each of the models on the training data and extract the cross-validation error (or out-of-bag error for bagging and Random forest). 
+
+```{r}
+library(randomForest)
+library(gbm)
+library(mlr)
+```
+
+```{r}
+# convert variables into factors
+heart$Sex <- as.factor(heart$Sex)
+heart$ChestPain <- as.factor(heart$ChestPain)
+heart$Fbs<- as.factor(heart$Fbs)
+heart$RestECG<- as.factor(heart$RestECG)
+heart$ExAng<- as.factor(heart$ExAng)
+heart$Slope<- as.factor(heart$Slope)
+heart$Ca<- as.factor(heart$Ca)
+heart$Thal<- as.factor(heart$Thal)
+heart$AHD<- factor(heart$AHD,
+                   levels = c("No", "Yes"), 
+                   labels = c("0", "1"))  
+
+# impute the missing value
+heart<- rfImpute(AHD~., heart, iter=6)
+```
+
+
+   a. For bagging use ``randomForest`` with ``mtry`` equal to the number of features (all other parameters at their default values). Generate the variable importance plot using ``varImpPlot`` and extract variable importance from the ``randomForest`` fitted object using the ``importance`` function.
+```{r}
+# bagging
+heart_bagging<- randomForest(AHD~., heart_train, mtry=sqrt(13))
+varImpPlot(heart_bagging,main="",pch=16)
+importance_bagging<- importance(heart_bagging)
+importance_bagging
+
+```
+   
+   b.  For random forests use ``randomForest`` with the default parameters. Generate the variable importance plot using ``varImpPlot`` and extract variable importance from the ``randomForest`` fitted object using the ``importance`` function. 
+```{r}
+heart_random <- randomForest(AHD~., heart_train, proximity=TRUE )# Random Forest
+# variable importance plot
+varImpPlot(heart_random,main="",pch=16)
+importance_random<- importance(heart_random)
+importance_random
+```
+   
+   c. For boosting use `gbm` with ``cv.folds=5`` to perform 5-fold cross-validation, and set ``class.stratify.cv`` to ``AHD`` (heart disease outcome) so that cross-validation is performed stratifying by ``AHD``.  Plot the cross-validation error as a function of the boosting iteration/trees (the `$cv.error` component of the object returned by ``gbm``) and determine whether additional boosting iterations are warranted. If so, run additional iterations with  ``gbm.more`` (use the R help to check its sintax). Choose the optimal number of iterations. Use the ``summary.gbm`` function to generate the variable importance plot and extract variable importance/influence (``summary.gbm`` does both). Generate 1D and 2D marginal plots with ``gbm.plot`` to assess the effect of the top three variables and their 2-way interactions. 
+```{r}
+
+heart_boosting<- gbm(AHD ~.,data=heart_train,
+                     distribution = 'bernoulli',
+                     cv.folds=5,class.stratify.cv=TRUE)
+
+
+plot(heart_boosting$cv.error,xlab = "iterations",ylab="boosting cv error",main="boosting trees cross-validation error")
+iteration<- which.min(heart_boosting$cv.error)
+# variable importance plot
+n.trees_opt<- gbm.perf(heart_boosting,plot.it=FALSE)
+summary(heart_boosting,plotit=FALSE, n.trees=n.trees_opt,10)
+```
+   
+   
+ii. Compute the test misclassification error for the 4 methods and comment on their relative performance.
+```{r}
+
+```
+
+
+### Analysis/conceptual 
+Yo will evaluate __the effect of critical boosting parameters__ (number of boosting iterations, shrinkage/learning rate, and tree depth/interaction) on the Metabric data.  In ``gbm`` the number of iterations is controlled by ``n.trees`` (default is 100), the shrinkage/learning rate is controlled by ``shrinkage`` (default is 0.001), and interaction depth by ``interaction.depth`` (default is 1).
+
+i. Split the metabric data into training and testing. 
+```{r}
+# load metabric data 
+
+load('/Users/zhenglong/OneDrive - University of Southern California/courses/PM591/week10/metabric.Rdata') 
+# split the data 
+set.seed(201)
+metabric_tsk = makeClassifTask(id= "One-year breast-cancer mortality", data=metabric,target = "y")
+
+split_desc= makeResampleDesc(method="Holdout",stratify = TRUE, split=0.7)
+
+set.seed(201)
+
+split = makeResampleInstance(split_desc, task = metabric_tsk)
+
+metabric_train = split$train.inds[[1]]; metabric_test = split$test.inds[[1]]
+```
+
+ii. Set the seed and train a boosting classification with ``gbm`` using 10-fold cross-validation (``cv.folds=10``) on the training data with ``n.trees = 10,000``, ``shrinkage = 0.001``, and ``interaction.depth = 1``. Plot the cross-validation errors as a function of the boosting iteration.
+```{r}
+set.seed(220)
+metabric_boost<- gbm(y~ ., metabric_train, 
+                     distribution= 'bernoulli', 
+                     n.trees=10000, shrinkage=0.001,
+                     interaction.depth = 1,
+                     cv.folds=10,class.stratify.cv = TRUE)
+
+plot(metabric_boost$cv.error,xlab = "iterations",ylab="boosting cv error")
+```
+
+iii. Repeat ii. using the same seed and ``n.trees=10,000`` with the following 3 additional combination of parameters: a) ``shrinkage = 0.001``, ``interaction.depth = 2``; b) ``shrinkage = 0.01``, ``interaction.depth = 1``; c) ``shrinkage = 0.01``, ``interaction.depth = 2``.
+```{r}
+set.seed(220)
+metabric_boost_a<- gbm(y~ ., metabric_train, 
+                     distribution= 'bernoulli', 
+                     n.trees=10000, 
+                     shrinkage=0.001,
+                     interaction.depth = 2,
+                     cv.folds=10,class.stratify.cv = TRUE)
+
+metabric_boost_b<- gbm(y~ ., metabric_train, 
+                     distribution= 'bernoulli', 
+                     n.trees=10000, 
+                     shrinkage=0.01,
+                     interaction.depth = 1,
+                     cv.folds=10,class.stratify.cv = TRUE)
+
+metabric_boost_c<- gbm(y~ ., metabric_train, 
+                     distribution= 'bernoulli', 
+                     n.trees=10000, 
+                     shrinkage=0.01,
+                     interaction.depth = 2,
+                     cv.folds=10,class.stratify.cv = TRUE)
+```
+
+iii. Use the best parameter combination among the ones examined above to a) generate 1D and 2D marginal plots with ``gbm.plot`` to assess the effect of the top three variables and their 2-way interactions; b) compute the test misclassification error, ROC, and AUC.
+ 
+```{r}
+
+```
+

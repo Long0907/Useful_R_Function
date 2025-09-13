@@ -1,0 +1,299 @@
+---
+title: "Assignment 6"
+author: " Luqing Ren"
+output:
+  html_document: default
+---
+
+```{r,include=FALSE}
+library(mlr)
+library(irace)
+library(kernlab)
+library(MASS)
+library(dplyr)
+library(purrr)
+library(cluster)
+library(fpc)
+```
+
+  
+### Exercise 1 
+In this exercise you will reproduce the comparison described in the textbook of support vector machines with different kernels on the heart data.
+
+i. You will first tune an svm with a radial basis function (RBF) kernel with respect to its two parameters $\,C$ and $\,\gamma$
+
+```{r,warning=FALSE}
+heart = read.csv('Heart.csv',header = T)
+# convert variables into factors
+heart$Sex <- as.factor(heart$Sex)
+heart$ChestPain <- as.factor(heart$ChestPain)
+heart$Fbs<- as.factor(heart$Fbs)
+heart$RestECG<- as.factor(heart$RestECG)
+heart$ExAng<- as.factor(heart$ExAng)
+heart$Slope<- as.factor(heart$Slope)
+heart$Ca<- as.factor(heart$Ca)
+heart$Thal<- as.factor(heart$Thal)
+heart$AHD<- factor(heart$AHD,
+                   levels = c("No", "Yes"), 
+                   labels = c("0", "1"))  
+
+heart = heart[complete.cases(heart), ]  #No missing values allowed for SVM
+
+# specify a task
+heart_tsk = makeClassifTask(id = "heart disease", 
+                            data = heart, target = "AHD")
+
+
+split_desc = makeResampleDesc(method='Holdout', stratify = TRUE, split=0.7)
+set.seed(301)
+split = makeResampleInstance(split_desc, task = heart_tsk)
+train_index = split$train.inds[[1]]; test = split$test.inds[[1]]
+train=heart[train_index,]; test=heart[-train_index,]
+
+# specify a svm learner
+rbfsvm.lrn = makeLearner("classif.ksvm", par.vals = list(kernel = "rbfdot"), predict.type = "prob")
+
+# Notice the "prob" argument requiring class probabilities are returned
+# How is that possible if SVMs are 0-1 classifiers??
+# SVMs are indeed 0-1 classifiers but they can be made to estimate class probabilities 
+# based on the distance to the classification hyperplane: 
+# (the further away the more confident about the classification to the corresponding class)
+
+cv5_stratified = makeResampleDesc("CV", iters=5, stratify = TRUE) 
+# 5-fold CV seems reasonable given the size of the training data
+
+ctrl = makeTuneControlIrace(maxExperiments = 200L)  
+#This tuning control specifies use of the package ``irace`` which efficiently explores the space of tuning parameters to find the best configuration
+
+ps = makeParamSet(
+  makeDiscreteParam("C", values = seq(1e-6, 5, length=10)),
+  makeDiscreteParam("sigma", values = c(1e-3, 1e-2, 1e-1))      # The sigma here parameter is our gamma parameter in the lecture!!
+)
+
+# Although SVMs are 0-1 classifiers they can be made to estimate class probabilities 
+# based on the distance to the classification hyperplane: 
+# the further away the more confident about the classification to the corresponding class
+set.seed(201)
+heart_svm_tune = tuneParams(rbfsvm.lrn, subsetTask(heart_tsk, train_index), cv5_stratified, measures=list(auc, mmce), par.set = ps, control = ctrl,show.info = F)
+
+```
+
+ii. Retrain on the training set using a) the optimal set of parameters (best CV AUC) and b) the set of parameters with the worst CV AUC. Predict on the test set using both sets of parameters, plot the corresponding test ROC curves, and compute the test AUCs. (hint: remember the ``mlr`` function ``plotROCCurves``.) Based on these results, does parameter tuning make a big difference in performance?
+
+```{r}
+# extract the optimal set of parameters
+heart_svm_tune$x$C
+heart_svm_tune$x$sigma
+# retrain on the training set with optimal parameters
+ rbfsvm.lrn_opt = makeLearner("classif.ksvm", par.vals = list(kernel = "rbfdot",
+                                                             C=heart_svm_tune$x$C,
+                                                             sigma=heart_svm_tune$x$sigma), predict.type = "prob")
+
+
+ 
+rbfsvm.lrn_opt<-setHyperPars(makeLearner("classif.ksvm",predict.type="prob"),par.vals=heart_svm_tune$x)
+heart_svm_opt = train(rbfsvm.lrn_opt,heart_tsk,subset=train_index)
+# predict on the testing set
+heart_svm_opt_predicttest<- predict(heart_svm_opt,heart_tsk,new.data=test)
+
+
+#extract the worst set of parameters(which return the minimum CV AUC)
+heart_svm_tune_path<-as.data.frame(heart_svm_tune$opt.path)[1:3]
+heart_svm_tune_path[which.min(heart_svm_tune_path$auc.test.mean),]
+
+# retrain on the training set with worst parameters
+rbfsvm.lrn_wst = makeLearner("classif.ksvm", par.vals = list(kernel = "rbfdot",
+                                                             C=5,
+                                                             sigma=0.1), predict.type = "prob")
+set.seed(2021)
+heart_svm_wst = train(rbfsvm.lrn_wst,heart_tsk,subset=train_index)
+# predict on the testing set
+heart_svm_wst_predicttest<- predict(heart_svm_wst,heart_tsk,new.data=test)
+
+# predictive performance
+performance(heart_svm_opt_predicttest,mmce)
+performance(heart_svm_wst_predicttest,mmce)
+
+df<-generateThreshVsPerfData(list(best=heart_svm_opt_predicttest,worst=heart_svm_wst_predicttest),measures = list(fpr,tpr,mmce))
+plotROCCurves(df)
+```
+The SVM model with worst parameters has higher test AUC than the SVM model with the optimal parameters.
+
+
+iii. Retrain on the full dataset (using the optimal parameter set only)
+
+```{r}
+heart_svm_final<- train(rbfsvm.lrn_opt,heart_tsk)
+```
+
+
+iv. The code below extends the comparison above to include both RBF, a polynomial kernel, and the linear kernel (i.e. support vector classifier). Now, RBF, the linear and the polynomial kernels share the cost parameter $\,C$ but also have additional non-shared tuning parameters (the polynomial degree $\,d$ is a tuning parameter only for polynomial kernels and $\,gamma$ is a tuning parameter only for RBF kernels). The code below constructs a set of parameters that enables tuning both shared and non-shared parameters all at once! 
+
+
+```{r}
+
+ps_extended = makeParamSet(
+  makeDiscreteParam("kernel", values = c("vanilladot", "polydot", "rbfdot")),
+  makeDiscreteParam("C", values = seq(1e-6, 5, length=10) ),
+  makeDiscreteParam("sigma", values = c(1e-3, 1e-2, 1e-1), requires = quote(kernel == "rbfdot") ), 
+  makeIntegerParam("degree", lower = 1L, upper = 5L, requires = quote(kernel == "polydot") )
+)
+  
+# Notice that the type of kernel itself is a tuning parameter in the specification above!!!
+```
+
+Tune the svm learner using this extended set of parameters ``ps_extended``.
+
+```{r,warning=FALSE}
+rbfsvm.lrn = makeLearner("classif.ksvm", predict.type = "prob")
+
+# tune the learner
+set.seed(201)
+heart_svm_tune_extend = tuneParams(rbfsvm.lrn, subsetTask(heart_tsk, train_index), cv5_stratified, measures=list(auc, mmce), par.set = ps_extended, control = ctrl,show.info = F)
+
+```
+
+v. Explore a wider range of values for $\,C$, $\,\gamma$ and $\,d$ and repeat ii. and iii. Which kernel performed best? What may this say about the nature of the true decision boundary?
+
+```{r}
+set.seed(2020)
+svm_path<-as.data.frame(heart_svm_tune_extend$opt.path)
+# RBF
+svm_path_rbf<- subset(svm_path,kernel=="rbfdot")
+bestC<- as.numeric(as.character(svm_path_rbf$C[which.max(svm_path_rbf$auc.test.mean)]))
+bestsigma<-as.numeric(as.character(svm_path_rbf$sigma[which.max(svm_path_rbf$auc.test.mean)]))
+svm_rbf_lrn = makeLearner("classif.ksvm", par.vals = list(kernel = "rbfdot",
+                                                             C=bestC,
+                                                             sigma=bestsigma),predict.type = "prob")
+
+svm_rbf_train<- train(svm_rbf_lrn,heart_tsk,subset=train_index)
+svm_rbf_pred<- predict(svm_rbf_train,newdata=test,type='prob')
+
+#polynomial
+svm_path_poly<- subset(svm_path,kernel=="polydot")
+bestC_poly<- as.numeric(as.character(svm_path_poly$C[which.max(svm_path_poly$auc.test.mean)]))
+bestdgree_poly<-as.numeric(as.character(svm_path_poly$degree[which.max(svm_path_poly$auc.test.mean)]))
+svm_poly_lrn = makeLearner("classif.ksvm", par.vals = list(kernel = "polydot",
+                                                             C=bestC_poly,
+                                                             degree=bestdgree_poly),predict.type = "prob")
+
+svm_poly_train<- train(svm_poly_lrn,heart_tsk,subset=train_index)
+svm_poly_pred<- predict(svm_poly_train,newdata=test,type='prob')
+
+#linear
+svm_path_linear<- subset(svm_path,kernel=="vanilladot")
+bestC_linear<- as.numeric(as.character(svm_path_linear$C[which.max(svm_path_linear$auc.test.mean)]))
+
+svm_linear_lrn = makeLearner("classif.ksvm", par.vals = list(kernel = "vanilladot",
+                                                             C=bestC_linear),predict.type = "prob")
+
+svm_linear_train<- train(svm_linear_lrn,heart_tsk,subset=train_index)
+svm_linear_pred<- predict(svm_linear_train,newdata=test,type='prob')
+
+# predictive performance
+df2<-generateThreshVsPerfData(list(rbf=svm_rbf_pred,polynomial=svm_poly_pred,linear=svm_linear_pred),measures = list(fpr,tpr))
+plotROCCurves(df2)
+
+performance(svm_rbf_pred,auc)
+performance(svm_poly_pred,auc)
+performance(svm_linear_pred,auc)
+
+# train the entire data 
+svm_rbf_final<- train(svm_rbf_lrn,heart_tsk)
+```
+The AUC value of radial kernel, polynomial kernel and linear kernel models are 0.871,0.865 and 0.864, respectively. The best performing model is radial kernel.
+
+
+#### Exercise 2 
+Train svms on the metabric data in a similar way to part iv of Exercise 1 and report your results. Compare the performance to that of lasso ridge regression (recall the similarity between SVM with a linear Kernel and logistic ridge regression).
+```{r,warning=FALSE}
+load("metabric.Rdata")
+# specify a task, split the data into training and testing
+set.seed(2020)
+metabric_tsk<- makeClassifTask(id="One-year breast-cancer mortality",data=metabric,target = "y")
+split_desc<- makeResampleDesc(method="Holdout",stratify = TRUE, split=0.7)
+split_metabric <-makeResampleInstance(split_desc,task=metabric_tsk)
+metabric_train_index = split_metabric$train.inds[[1]]; metabric_test_index = split_metabric$test.inds[[1]]
+                                                                            
+metabric_train<-metabric[metabric_train_index,];metabric_test<-metabric[-metabric_test_index,]
+
+# svm model: tuning parameters by kernel function
+metabric_svm_tune_extend <- tuneParams(svm, subsetTask(metabric_tsk, metabric_train_index), cv5_stratified, measures=list(auc, mmce), par.set = ps_extended, control = ctrl,show.info = F)
+
+# get the optimal parameters and predict on testing
+metabric_svm_opt<-setHyperPars(rbfsvm.lrn,par.vals = metabric_svm_tune_extend$x)
+metabric_svm_train<- train(metabric_svm_opt,metabric_tsk,subset=metabric_train_index)
+metabric_svm_pred<-predict(metabric_svm_train,newdata=metabric_test,type="prob")
+
+# ridge  regression
+metabric_ridge_lnr <-  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                               predict.type = "prob",
+                              alpha=0, type.measure='auc')
+
+metabric_CVridge <- train(learner=metabric_ridge_lnr,task= metabric_tsk,subset=metabric_train_index)
+metabric_lambda.min_ridge <- metabric_CVridge $learner.model$lambda.min
+metabric_ridge_lambda.min_lnr <- makeLearner("classif.glmnet", lambda=metabric_lambda.min_ridge ,
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=0)   
+
+metabric_ridge_fit <- train(metabric_ridge_lambda.min_lnr, metabric_tsk, metabric_train_index)
+metabric_ridge_predict <- predict(metabric_ridge_fit,metabric_tsk,subset=metabric_test_index)
+
+#plot the predictive performance
+df3<-generateThreshVsPerfData(list(svm=metabric_svm_pred,ridge=metabric_ridge_predict),measures=list(fpr,tpr))
+plotROCCurves(df3)
+performance(metabric_svm_pred,auc)
+performance(metabric_ridge_predict,auc)
+```
+
+The optimal SVM is a linear kernel with best C value 2.78. The optimal lambda parameter for ridge regression is 1.21.The predictive AUC values of SVM and ridge are  1,0.76, respectively. In this case, the linear SVM model must has a overfitting issue which has a perfect AUC value. The outcome y in this metabric data set is a skewed variable, with 18% "0" class and 82% "1" class. When the classes are well separated the SVM classifier tends to perform better, but it has the overfitting issue.
+
+
+#### Exercise 3
+Compute PCs on the metabric data (features only). Plot the cumulative variance explained by the PCs. Plot the first PC against the second PC distinguishing the two classes by color. Repeat for PC1 vs.PC3 and comment on whether the classes are well separated by the first 3 PCs.
+```{r}
+feature<- metabric[,-1]
+feature_pca<-prcomp(feature)
+plot(100*feature_pca$sdev^2/sum(feature_pca$sdev^2),col="red4",cex=1.2,cex.lab=1.2,cex.axis=1.2,pch=16,xlab="PCA index",ylab="% variance explained")
+
+#plot PC1 and PC2
+par(mfrow=c(1,2),mar=c(5,5,4,1))
+col<-c("red","blue")
+plot(feature_pca$x[,1:2], col=col,pch=16)
+legend("topleft",legend=c("PC1","PC2"),col=c("red","blue"),pch=16)
+
+#plot PC1 and PC3
+col2<-c("red","black")
+plot(feature_pca$x[,c(1,3)], col=col2,pch=16)
+legend("topleft",legend=c("PC1","PC3"),col=c("red","black"),pch=16)
+
+```
+The two classes are not well separated by first three PCs.
+
+
+
+#### Exercise 4
+Compare hierarchical clustering on the TCGA pan-cancer data (features only) using complete, single, and average linkage
+```{r}
+tcga<- read.csv("TCGA_pancancer.csv",header = T)
+tacga_lab<- read.csv("TCGA_pancancer_labels(1).csv",header = T)
+tacga_lab <- factor(tacga_lab$Class)
+table(tacga_lab)
+
+# vector of methods
+method<-c("complete","average","single")
+names(method)<-c("complete","average","single")
+#function to compute coefficients
+fuc<- function(x){
+  agnes(tcga,method = x)$ac
+}
+
+map_dbl(method,fuc)
+
+cat("Complete method has the highest agglomeative coefficient. The dendogram is as follow:")
+complete<- agnes(tcga, method = "complete")
+pltree(complete,hang=-1,main="Dendrogram of agnes")
+```
+The complete method is selected since it has the highest ac.

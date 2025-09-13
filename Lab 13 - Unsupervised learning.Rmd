@@ -1,0 +1,15 @@
+---
+title: "PCA and clustering"
+output:
+  html_document:
+    df_print: paged
+---
+Learning objective: PCA and clustering using ``R``
+
+### Analysis
+
+#### Exercise 1
+Compute PCs on the metabric data (features only). PLot the cumulative variance explained by the PCs. Plot the first PC against the second PC distinguishing the two classes by color. Repeat for PC1 vs.PC3 and comment on whether the classes are well separated by the first 3 PCs.
+
+#### Exercise 2
+Compare k-means, and hierarchical clustering on the TCGA pan-cancer data (features only) using complete, single, and average linkage

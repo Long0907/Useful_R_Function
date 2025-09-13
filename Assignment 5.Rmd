@@ -1,0 +1,150 @@
+---
+title: "PM 591 -- Machine Learning for the Health Sciences."
+author: "Assignment 5"
+date: "Due 4/16/2019"
+html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Exercise 1 (Analysis/conceptual)
+You will assess how well a tree model can capture non-linearities by fitting a regression tree to simulated non-linear data.
+
+i. Simulate the data
+
+```{r, eval=FALSE}
+set.seed(1984) 
+n = 1000
+x = runif(n, -5, 5) # n observations uniformly distributed in the interval -5 to 5
+error = rnorm(n, sd=0.5)
+y = sin(x) + error # nonlinear relationship between outcome y and feature x
+nonlin = data.frame(y=y, x=x)
+```
+
+ii. Split the data into training and testing (500 observations in each). Plot the data -- scatterplot of y vs. x
+
+iii. Fit a regression tree using the trainig set 
+
+```{r, eval=FALSE}
+library(rpart)
+treefit = rpart(y~x, method='anova', control=list(cp=0), data=nonlin[train,]) # Method='anova' indicate sregression tree. cp=0 ensures that binary recursive partitioning will not stop early due to lack of improvement in RSS by an amount  of at least cp
+```
+
+iv. Plot the fitted regression tree
+
+```{r, eval=FALSE}
+plot(treefit) # plots the tree
+text(treefit) # annotates the tree. May fail if tree is too large
+
+library(rpart.plot)
+rpart.plot(treefit) #the rpart.plot function generates better looking trees!
+```
+
+Note: the height of the branches are proportional to the improvement in RSS
+
+v. Plot the cv relative error to determine the optimal complexity parameter
+
+```{r, eval=FALSE}
+plotcp(treefit)
+```
+
+vi. Print the table complexity parameter values and their associated cv-errors
+
+```{r, eval=FALSE}
+printcp(treefit)
+```
+
+vii. Select the optimal complexity parameter and prune the tree
+
+```{r, eval=FALSE}
+optimalcp =  # for you to fill in
+treepruned = prune(treefit, cp=optimalcp)
+```
+
+viii. Plot the pruned tree
+
+ix. Summarize the pruned tree object and relate the summary to the plotted tree above
+
+```{r, eval=FALSE}
+summary(treepruned)
+```
+
+x. Based on the plot and/or summary of the pruned tree create a vector of the (ordered) split points for variable x, and a vector of fitted values for the intervals determined by the split points of x.
+
+```{r, eval=FALSE}
+x_splits = c() # for you to fill in
+y_splits = c() # for you to fill in
+```
+
+xi. Plot the step function corresponding to the fitted (pruned) tree
+
+```{r, eval=FALSE}
+plot(y~x, data=nonlin[train,])
+stpfn = stepfun(x_splits, y_splits) #stepfun creates the step function 
+plot(stpfn, add=TRUE, lwd=2, col='red4') #add=TRUE plots over the existing plot 
+```
+
+xii. Fit a linear model to the training data and plot the regression line. Contrats thethe quality of the fit of the tree model vs. linear regression by inspection of the plot
+
+```{r, eval=FALSE}
+lmfit = lm(y ~ x, data=nonlin[train,])
+summary(lmfit)
+abline(lmfit, col='blue', lwd=2)
+```
+ 
+xiii. Compute the test MSE of the pruned tree and the linear regression model
+
+
+### Exercise 2 (Analysis)
+You will recreate the analysis of the heart data in the textbook and lecture. 
+
+i.   Split the data into training and testing
+
+ii.  Fit a classification tree using ``rpart``
+
+iii. Plot the unpruned tree
+
+iv.  Plot the cv error
+
+v. Prune the tree using the optimal complexity parameter
+
+vi. Plot the pruned tree
+
+vii. Compute the test misclassification error
+
+vii. Fit the tree with the optimal complexity parameter to the full data (training + testing)
+
+
+### Exercise 2 -- Analysis
+Compare the performance of classification trees, bagging, random forests, and boosting for predicting heart disease based on the ``heart`` data. You can use ``mlr`` or directly the appropriate R packages.
+
+i. Split the data into training and testing. Train each of the models on the training data and extract the cross-validation (or out-of-bag error for bagging and Random forest). 
+
+   a. For classification trees use ``rpart`` with pruning. Plot the tree using ``fancyRpartPlot`` in package ``rattle``. Plot the variable importance .
+   
+   b. For bagging use ``randomForest`` with ``mtry`` equal to the number of features (all other parameters at their default values). Generate the variable importance plot using ``varImpPlot`` and extract variable importance from the ``randomForest`` fitted object using the ``importance`` function.
+   
+   c.  For random forests use ``randomForest`` with the default parameters. Generate the variable importance plot using ``varImpPlot`` and extract variable importance from the ``randomForest`` fitted object using the ``importance`` function. 
+   
+   d. For boosting use `gbm` with ``cv.folds=5`` to perform 5-fold cross-validation, and set ``class.stratify.cv`` to ``AHD`` (heart disease outcome) so that cross-validation is performed stratifying by ``AHD``.  Plot the cross-validation error as a function of the boosting iteration/trees (the `$cv.error` component of the object returned by ``gbm``) and determine whether additional boosting iterations are warranted. If so, run additional iterations with  ``gbm.more`` (use the R help to check its sintax). Choose the optimal number of iterations. Use the ``summary.gbm`` funtion to generate the variable importance plot and extract variable importance/influence (``summary.gbm`` does both). Generate 1D and 2D marginal plots with ``gbm.plot`` to assess the effect of the top three variables and their 2-way interactions. 
+   
+   
+ii. Compute the test misclassification error for the 4 methods and comment on their relative performance.
+
+
+### Exercise 3 -- Analysis/conceptual 
+Yo will evaluate the effect of critical boosting parameters (number of boosting iterations, shrinkage/learning rate, and tree depth/interaction) on the Metabric data.  In ``gbm`` the number of iterations is controlled by ``n.trees`` (default is 100), the shrinkage/learning rate is controlled by ``shrinkage`` (default is 0.001), and interaction depth by ``interaction.depth`` (default is 1).
+
+i. Split the metabric data into training and testing. 
+
+ii. Set the seed and train a boosting classification with ``gbm`` using 10-fold cross-validation (``cv.folds=10``) on the training data with ``n.trees = 5,000``, ``shrinkage = 0.001``, and ``interaction.depth =1``. Plot the cross-validation errors as a function of the boosting iteration.
+
+iii. Repeat ii. using the same seed and ``n.trees=5,000`` with the following 3 additional combination of parameters: a) ``shrinkage = 0.001``, ``interaction.depth = 2``; b) ``shrinkage = 0.01``, ``interaction.depth = 1``; c) ``shrinkage = 0.01``, ``interaction.depth = 2``.
+
+iii. Choose the best parameter combination among the ones examinded above to a) generate 1D and 2D marginal plots with ``gbm.plot`` to assess the effect of the top three variables and their 2-way interactions; b) compute the test msclassification error and AUC.
+ 
+
+

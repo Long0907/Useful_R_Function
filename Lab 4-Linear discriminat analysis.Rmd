@@ -1,0 +1,86 @@
+---
+title: "Binary classification, LDA"
+output:
+  html_document:
+    df_print: paged
+---
+Learning objectives.
+
+- Perform Linear discriminant analysis classification in ``R``.
+- Assess performance of a binary classifier 
+
+### Analysis 
+The goal of this exercise is to fit several LDA classifiers and perform model selection using the breast cancer data set. For your convenience the code to pre-process/transform the data is provided below.
+
+a. Split the data into training (70%), and validation (30%). (Because of the moderate sample size we will not have a separate test set -- we will learn later in the course about cross-validation, which will allow us to split the data into training and testing only and still perform model selection)
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(vcd)
+```
+
+```{r}
+# load the data set
+cancer<- read.csv("breast-cancer.data.txt", header = T,stringsAsFactors = T)
+# category the predictors
+cancer<- 
+  cancer %>% 
+  mutate(recurrence =factor(recurrence,
+                           levels = c("no-recurrence-events", "recurrence-events"), 
+                           labels = c("no-recurrence", "recurrence")),
+         age_quant = as.integer(age),
+         tumor_size_quant = factor(tumor_size,
+                          levels = c("0-4","5-9","10-14", "15-19", "20-24", "25-29", "30-34", "35-39","40-44","45-49","50-54"),labels = c(1,2,3,4,5,6,7,8,9,10,11)),
+         tumor_size_quant = as.integer(tumor_size_quant),
+         inv_nodes_quant = factor(inv_nodes,
+                          levels = c("0-2","3-5","6-8", "9-11", "12-14", "15-17","24-26"),labels = c(1,2,3,4,5,6,7)),
+        inv_nodes_quant = as.integer(inv_nodes_quant),                       
+         ) 
+
+# split the data into training 70% and validation 30%
+set.seed(200)
+n<- nrow(cancer)
+train<- sample(1:n, floor((0.7)*n))
+cancer_train<- cancer[train,] 
+cancer_vali<- cancer[-train,]
+```
+
+b. Using the training data, graphically assess each of the 9 predictors using a boxplot for quantitative predictors and a mosaic plot for a categorical predictors (for the transformed predictors use the quantitative versions instead of the original categorical versions). Note: you can use plot to get these graphs. Use``plot(recurrence, your_predictor)``to get a boxplot for a quantitative predictor and ``plot(your_predictor, recurrence)`` for a categorical predictor to get a mosaic plot. Visually determine the 3 most most predictive variables, i.e. the variables that best separate the recurrent and non-recurrent classes. (This is an completely informal procedure since a visual assessment is inherently subjective).
+```{r}
+#box plots for the quantitative predictors and recurrence
+par(mfrow=c(2,2))
+plot_deg<-boxplot(deg_malig~recurrence,data=cancer_train)
+plot_age<-boxplot(age_quant~recurrence,data=cancer_train)
+plot_size<-boxplot(tumor_size_quant~recurrence,data=cancer_train)
+plot_inv<-boxplot(inv_nodes_quant~recurrence,data=cancer_train)
+# mosaic plots for the categorical predictors and recurrence
+#assoc(cancer_train,side,recurrence, shade=TRUE, legend=TRUE)
+
+mosaic_side<- mosaic(recurrence ~ side, data = cancer_train,zero_size = 0)
+mosaic_meno<- mosaic(recurrence ~ menopause, data = cancer_train,zero_size = 0)
+mosaic_quad<- mosaic(recurrence ~ quadrant, data = cancer_train,zero_size = 0)
+mosaic_nodecaps<- mosaic(recurrence ~ node_caps, data = cancer_train,zero_size = 0)
+mosaic_irradiat<- mosaic(recurrence ~ irradiat, data = cancer_train,zero_size = 0)
+mosaic(recurrence~side+menopause+quadrant+node_caps+irradiat,data= cancer_train,zero_size =0)
+
+```
+__From the box plots, 
+
+
+c. Build LDA classifiers of increasing complexity by including: i) the most predictive variable, ii) the two most predictive variables, iii) the three most predictive variables and iv) all the 9 predictor variables.
+```{r}
+
+```
+    
+e. Write an R function ``classificationError`` to compute the overall misclassification error, specificity, and sensitivity of a classifier. The function should take a confusion matrix as its input (which you can create using ``table`` as shown in the lecture) and return a vector with the overall misclassication error, specificity and sensitivity. (Hint: separately compute the three quantities ``error``, ``spec``, and ``sens`` inside the body of the function and then put them together in a vector using ``c(error=error, sensitivity=sens, specificity=spec)`` in the last line of the body of the function before the closing ``}`` -- the last line is by default what a function returns. The returned object can be any R object including a siggle number, a vector, a data.frame or even another function!)
+    
+f. Compute the training and test errors for each of the classifiers in e. Which classifier would you choose?
+    
+g. Plot in the same graph the training and test misclassification error as a function of classifier complexity
+    
+h. Repeat g. for sensitivity and specificity 
+
+```{r}
+
+```
+    

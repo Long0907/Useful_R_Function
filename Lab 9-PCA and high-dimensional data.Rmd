@@ -1,0 +1,237 @@
+---
+title: "PCA regression and High-dimensional data"
+output:
+  html_document:
+    df_print: paged
+---
+Learning objectives.
+
+- Evaluate grouping properties of elastic net and contrast with Lasso
+- Perform model PCA regression using mlR
+- Perform ridge and lasso **logistic regression** in a **high-dimensional data setting** using mlR
+
+### Conceptual
+
+#### Exercise 1
+
+Perform a small simulation with N = 50 and p = 100 to assess the grouping properties of elastic net. Simulate the features to be multivariate normally distributed (hint: use the 'mvrnorm' in the MASS package) such that there are 20 independent blocks (no correlation between blocks) of 5 equi-correlated features in each block: block1: 1,...,5;  block2: 6,...10; ...; block20: 96...100; the bloSimulate a quantitative outcome such that only the features in the first block have an effect: $\beta_1 = \ldots...\beta_5 = 0.5$, $\beta_6 = \ldots...\beta_{100} = 0$ 
+
+- Compare the results of analyzing the simulated data with the Lasso and elastic net linear regression
+
+- How do the results change when  $\beta_1 = 0.1, \beta_2 = 0.2, \beta_3 = 0.3, \beta_4=0.4, \beta_5 = 0.5$, $\beta_6 = \ldots...\beta_{100} = 0$, $\beta_6 = \ldots...\beta_{100} = 0$?
+
+### Analysis
+
+#### Exercise 1
+You will build a model to predict psa levels using __PCA linear regression__ using the PSA prostate data
+
+i. Load the mlR library and the prostate data
+```{r, eval=FALSE}
+library(mlr)
+prostate = read.csv("prostate.csv")
+```
+
+ii. Specify the regression task and the base linear regression learner. Note: we will not split the data into training and testing because of the modest sample size. Explain whether this invalidates any prediction model we develop and why in practice we always want a test set.
+
+```{r, eval=FALSE}
+psa_tsk = makeRegrTask(id = "PSA prediction", data = prostate, target = "lpsa")
+
+lm_lrn = makeLearner("regr.lm", fix.factors.prediction = TRUE)
+```
+
+- Train on full data is potentially overestimated the prediction. The regression task bases on linear regression, therefore the model best fits on full data set must have a good predictive performance on the same data set.In practice, we have to split the data set into training set and test set. The never used test set for model prediction will much precisely predict the true trends.
+
+
+iii. Create a new learner adding a PCA pre-processing step to the base learner. In ``mlR`` parlance this is called a wrapped learner. This becomes a new 'composite' learner that can be used just like any of the standard learners we used before. In particular if K-fold CV is used, both the PCA and the linear regression will be used for training on each set of K-1 folds and prediction on the K-th fold. The following is taken from the mlR documentation:
+
+> Wrappers can be employed to extend integrated learners with new functionality. The broad scope of operations and methods which are implemented as wrappers underline the flexibility of the wrapping approach: Data preprocessing, Imputation, Tuning, Feature selection, ....
+
+```{r, eval=FALSE}
+# combines linear regression and PCA into a single learner,pre-processing PCA
+PCA_lm_lrn = makePreprocWrapperCaret(lm_lrn, ppc.pca = TRUE) 
+```
+
+iv. Rather than fixing it as in the lecture, we will treat the number of principal components  ``ppc.pcaComp`` as a tuning parameter. Specify ``ppc.pcaComp`` as a an integer tuning parameter ranging from 1 to the number of features in the PSA data
+
+```{r, eval=FALSE}
+ps = makeParamSet(makeIntegerParam("ppc.pcaComp", lower = 1, upper = getTaskNFeats(psa_tsk)))
+```
+
+v. Create a control object for hyperparameter tuning with grid search.
+
+```{r, eval=FALSE}
+ctrl = makeTuneControlGrid(resolution = 10) 
+# resolution is the number of points in the grid of values for the tuning parameter. Since there are 8 possible PCs we want resolution >= 8
+```
+
+vi. Perform the tuning
+
+```{r, eval=FALSE}
+tuneParams(PCA_lm_lrn, task=psa_tsk, cv5, par.set = ps, control = ctrl, show.info = TRUE)
+```
+
+vii. How many principal components are selected? Does pre-processing by PCA help in this case?
+
+```{r}
+PCA_lm_lrn_tune = makePreprocWrapperCaret(lm_lrn, ppc.pca = TRUE,ppc.pcaComp = 8) 
+set.seed(101)
+psa_benchmark <- benchmark(list(lm_lrn,PCA_lm_lrn_tune),psa_tsk,cv5,show.info = TRUE)
+psa_benchmark
+```
+
+- All 8 features are selected as principal components. The MSE values  between linear regression and pre-processing PCA are the exactly same. Therefore, using 8 PCs does not improve prediction.
+
+
+#### Exercise 2
+You will build a classifier to predict cancer specific death among breast cancer patients within 1-year of diagnosis based on a subset of 1,000 gene expression features from the Metabric data using ridge, lasso and elastic net logistic regression. (The metabric data contains close to 30,000 gene expression features, here we use a subset to keep computation times reasonable for this in class Lab. In the homework version you will use the full feature set)
+
+i. Load the mlr library and the Metabric data
+
+```{r, eval=FALSE}
+library(mlr)
+load('metabric.Rdata') 
+```
+
+ii. Check the dimension of the metabric dataframe using ``dim`` check the number of deaths using ``table`` on the binary outcome variable
+```{r}
+dim(metabric)
+table(metabric$y)
+```
+
+- There are totally 803 patients and 1,001 gene expression features in data set. 146 people dead within 1- year after diagnosis.
+
+
+iii. Split the data into training (70%) and test (30%)
+```{r out}
+metabric_tsk = makeClassifTask(id= "One-year breast-cancer mortality", data=metabric,target = "y")
+
+split_desc= makeResampleDesc(method="Holdout",stratify = TRUE, split=0.7)
+
+set.seed(201)
+
+split = makeResampleInstance(split_desc, task = metabric_tsk)
+
+train = split$train.inds[[1]]; test = split$test.inds[[1]]
+```
+
+iv. Create an appropriate mlR task
+```{r}
+# create the mlR task on the subset of training set
+metabric_tsk_train = subsetTask(metabric_tsk, subset=train)
+```
+
+v. Create lasso, ridg, and Enet learners using "classif.cvglmnet" (Recall that by specifying ``cv.glmnet`` as the learner, k-fold (10-fold by default) will be automatically used to tune the lambda penalty parameter. This takes advantage of the fast implementation of cross-validation within the ``glmnet`` package rather than cross-validating using the ``mlr`` tools ``makeResampleDesc`` and ``resample``)
+```{r}
+# LASSO learner
+metabric_lasso_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                               predict.type = "prob",
+                              alpha=1, type.measure='auc')
+# ridge learner
+metabric_ridge_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                               predict.type = "prob",
+                              alpha=0, type.measure='auc')
+# elastic net learner
+metabric_elastic_lnr =  makeLearner("classif.cvglmnet", 
+                              fix.factors.prediction = TRUE,
+                               predict.type = "prob",
+                              alpha=0.5, type.measure='auc')
+```
+
+vi. Train the models on the training data using CV with an appropriate performance measure (hint: you can check the available measures for your task using ``listMeasures``). Extract the cross-validated measure of performance. Why is the CV measure of performance the relevant metric to compare models? 
+```{r}
+set.seed(201)
+# lasso regression
+metabric_CVlasso = train(learner=metabric_lasso_lnr,task= metabric_tsk_train)
+metabric_auc_lasso = max(metabric_CVlasso$learner.model$cvm)
+
+# ridge regression
+metabric_CVridge = train(learner=metabric_ridge_lnr,task= metabric_tsk_train)
+metabric_auc_ridge = max(metabric_CVridge$learner.model$cvm)
+
+#Enet regression
+metabric_CVelastic = train(learner=metabric_elastic_lnr,task= metabric_tsk_train)
+metabric_auc_elastic = max(metabric_CVelastic$learner.model$cvm)
+
+print(paste("The maximum AUC value of lasso logistic regression is",round(metabric_auc_lasso,3)))
+print(paste("The maximum AUC value of ridge logistic regression is",round(metabric_auc_ridge,3)))
+print(paste("The maximum AUC value of elastic logistic regression is",round(metabric_auc_elastic,3)))
+
+```
+
+
+vii. Which method performs best? What does this say about the likely nature of the true relationship between the expression features and the outcome?
+
+- According the AUC values of three methods, the ridge logistic regression method provides the maximum AUC value 0.766. Therefore, ridge logistic regression perform best. 
+
+
+viii. Report an 'honest' estimate of prediction performance.
+
+```{r}
+# pick the min.lambda model
+#lasso regression predict on test set
+set.seed(201)
+lambda.min_lasso = metabric_CVlasso$learner.model$lambda.min
+lasso_lambda.min_lnr = makeLearner("classif.glmnet", lambda=lambda.min_lasso,
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=0.5)   
+lasso_fit = train(lasso_lambda.min_lnr, metabric_tsk_train)
+lasso_predict = predict(lasso_fit,newdata=metabric[test,], type="prob")
+lasso_fit_auc= performance(lasso_predict,measure=auc)
+
+#ridge regression predict on test set
+set.seed(201)
+lambda.min_ridge = metabric_CVridge $learner.model$lambda.min
+ridge_lambda.min_lnr = makeLearner("classif.glmnet", lambda=lambda.min_ridge ,
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=0.5)   
+ridge_fit = train(ridge_lambda.min_lnr, metabric_tsk_train)
+ridge_predict = predict(ridge_fit,newdata=metabric[test,], type="prob")
+ridge_fit_auc= performance(ridge_predict,measure=auc)
+
+#ridge regression predict on test set
+set.seed(201)
+lambda.min_elastic = metabric_CVelastic $learner.model$lambda.min
+elastic_lambda.min_lnr = makeLearner("classif.glmnet", lambda=lambda.min_elastic ,
+                              fix.factors.prediction = TRUE,
+                              predict.type = "prob",
+                              alpha=0.5)   
+elastic_fit = train(elastic_lambda.min_lnr, metabric_tsk_train)
+elastic_predict = predict(elastic_fit,newdata=metabric[test,], type="prob")
+elastic_fit_auc= performance(elastic_predict,measure=auc)
+
+
+print(paste("The maximum AUC value of lasso logistic regression on test set is",round(ridge_fit_auc,3)))
+print(paste("The maximum AUC value of ridge logistic regression on test set is",round(ridge_fit_auc,3)))
+print(paste("The maximum AUC value of elastic logistic regression on test set is",round(elastic_fit_auc,3)))
+
+```
+
+ix. Re-train the best performing method on all the data (training and test). This is the final model you would use to predict death in new women just diagnosed and treated for breast cancer. Why is this ok and why is this better than simply using the model trained on just the training data? 
+
+
+```{r}
+  
+metabric_elastic_final = train(learner= elastic_lambda.min_lnr, task= metabric_tsk)
+# trains the elastic model with the optimal lambda on entire data set (test + train) 
+metabric_elastic_final 
+
+```
+
+
+x. The data set ``new_expression_profiles`` contains the gene expression levels for 15 women just diagnosed with breast cancer. Estimate their five-year survival probabilities using the selected model.
+```{r,message=FALSE}
+library(tidyverse)
+new<-read_csv("new_expression_profiles.csv")
+
+new_pred<- predict(metabric_elastic_final,newdata = new[,-1])
+
+new_prob<- getPredictionProbabilities(new_pred)
+new_prob
+```
+
+
+
